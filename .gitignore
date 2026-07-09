@@ -1,0 +1,9 @@
+backend/venv/
+backend/db.sqlite3
+backend/.env
+backend/.git_backup/
+backend/apps/accounts/test/
+__pycache__/
+*.pyc
+.env
+.vscode/
