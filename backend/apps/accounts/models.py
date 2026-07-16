@@ -9,7 +9,11 @@ class UserProfile(models.Model):
         RADIOTHERAPIST = "radiotherapist", "Radiotherapist"
         SECRETARY = "secretary", "Secretary"
         ACCOUNTANT = "accountant", "Accountant"
-        HR = "hr", "HR"
+        RESPONSABLE_HR = "hr", "HR"
+        SUPPORT_CLIENT = "support_client", "Support Client"
+        MANAGER = "manager", "Manager"
+        RECEPTIONIST = "receptionist", "Receptionist"
+        ASSISTANT = "assistant", "Assistant"
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,

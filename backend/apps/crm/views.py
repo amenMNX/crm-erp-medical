@@ -3,10 +3,12 @@ from rest_framework import filters, viewsets
 
 from apps.accounts.permissions import ReadOnlyOrRole
 
-from .models import Appointment, Patient, TreatmentPlan, TreatmentSession
+from .models import Appointment, Complaint, Patient, Ticket, TreatmentPlan, TreatmentSession
 from .serializers import (
     AppointmentSerializer,
+    ComplaintSerializer,
     PatientSerializer,
+    TicketSerializer,
     TreatmentPlanSerializer,
     TreatmentSessionSerializer,
 )
@@ -14,6 +16,13 @@ from .serializers import (
 
 class CrmPermission(ReadOnlyOrRole):
     allowed_roles = ["admin", "doctor", "secretary", "radiotherapist"]
+
+
+class TicketPermission(ReadOnlyOrRole):
+    # "support_client" is the current backend role slug for support agents
+    # (apps.accounts.models.UserProfile.Role.SUPPORT_CLIENT). Revisit this
+    # list once the role mismatch (frontend vs backend) is reconciled.
+    allowed_roles = ["admin", "support_client", "secretary"]
 
 
 class PatientViewSet(viewsets.ModelViewSet):
@@ -53,3 +62,23 @@ class TreatmentSessionViewSet(viewsets.ModelViewSet):
     filterset_fields = ["status", "patient", "treatment_plan", "machine", "room"]
     search_fields = ["notes", "machine", "room", "patient__first_name", "patient__last_name", "treatment_plan__name"]
     ordering_fields = ["scheduled_datetime", "session_number", "created_at"]
+
+
+class TicketViewSet(viewsets.ModelViewSet):
+    queryset = Ticket.objects.select_related("client").prefetch_related("agents").all()
+    serializer_class = TicketSerializer
+    permission_classes = [TicketPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["statut", "priorite", "client", "agents"]
+    search_fields = ["numero", "titre", "description", "client__first_name", "client__last_name"]
+    ordering_fields = ["created_at", "updated_at", "priorite", "statut"]
+
+
+class ComplaintViewSet(viewsets.ModelViewSet):
+    queryset = Complaint.objects.select_related("client").all()
+    serializer_class = ComplaintSerializer
+    permission_classes = [TicketPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["statut", "client"]
+    search_fields = ["description", "client__first_name", "client__last_name"]
+    ordering_fields = ["created_at", "resolved_at"]

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 # Create your models here.
@@ -130,3 +131,108 @@ class TreatmentSession(models.Model):
 
     def __str__(self):
         return f"Session {self.session_number} - {self.patient}"
+
+
+class Ticket(models.Model):
+    # Values match the frontend's TicketPriority/TicketStatus string unions
+    # exactly (frontend/src/lib/domain.ts) so no translation layer is needed
+    # between what the UI sends and what gets stored.
+    class Priority(models.TextChoices):
+        FAIBLE = "Faible", "Faible"
+        MOYENNE = "Moyenne", "Moyenne"
+        ELEVEE = "Élevée", "Élevée"
+        CRITIQUE = "Critique", "Critique"
+
+    class Status(models.TextChoices):
+        NOUVEAU = "Nouveau", "Nouveau"
+        EN_COURS = "En cours", "En cours"
+        EN_ATTENTE = "En attente", "En attente"
+        RESOLU = "Résolu", "Résolu"
+        FERME = "Fermé", "Fermé"
+
+    numero = models.CharField(max_length=50, unique=True, editable=False)
+    titre = models.CharField(max_length=255)
+    description = models.TextField()
+    priorite = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.FAIBLE,
+    )
+    statut = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NOUVEAU,
+    )
+    client = models.ForeignKey(
+        Patient,
+        on_delete=models.CASCADE,
+        related_name="tickets",
+    )
+    agents = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name="assigned_tickets",
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.numero} - {self.titre}"
+
+    def save(self, *args, **kwargs):
+        if not self.numero:
+            self.numero = self._generate_numero()
+        super().save(*args, **kwargs)
+
+    @staticmethod
+    def _generate_numero():
+        last = Ticket.objects.order_by("-id").first()
+        next_id = (last.id + 1) if last else 1
+        candidate = f"TCK-{next_id:03d}"
+        # Guard against gaps/deletions causing a collision.
+        while Ticket.objects.filter(numero=candidate).exists():
+            next_id += 1
+            candidate = f"TCK-{next_id:03d}"
+        return candidate
+
+
+class Complaint(models.Model):
+    # Values match frontend/src/lib/domain.ts ComplaintStatus exactly.
+    class Status(models.TextChoices):
+        NOUVELLE = "Nouvelle", "Nouvelle"
+        EN_TRAITEMENT = "En traitement", "En traitement"
+        RESOLUE = "Résolue", "Résolue"
+        FERMEE = "Fermée", "Fermée"
+
+    description = models.TextField()
+    statut = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NOUVELLE,
+    )
+    client = models.ForeignKey(
+        Patient,
+        on_delete=models.CASCADE,
+        related_name="complaints",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Complaint #{self.id} - {self.client}"
+
+    def save(self, *args, **kwargs):
+        if self.statut in (self.Status.RESOLUE, self.Status.FERMEE) and not self.resolved_at:
+            from django.utils import timezone
+            self.resolved_at = timezone.now()
+        elif self.statut not in (self.Status.RESOLUE, self.Status.FERMEE):
+            self.resolved_at = None
+        super().save(*args, **kwargs)

@@ -1,8 +1,8 @@
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, viewsets
 from apps.accounts.permissions import ReadOnlyOrRole
-from .models import Invoice, Payment
-from .serializers import InvoiceSerializer, PaymentSerializer
+from .models import CNAMClaim, Invoice, Payment
+from .serializers import CNAMClaimSerializer, InvoiceSerializer, PaymentSerializer
 
 class AccountingPermission(ReadOnlyOrRole):
     allowed_roles = ["admin", "accountant"]
@@ -35,3 +35,13 @@ class PaymentViewSet(viewsets.ModelViewSet):
         "notes",
     ]
     ordering_fields = ["payment_date", "amount", "created_at"]
+
+
+class CNAMClaimViewSet(viewsets.ModelViewSet):
+    queryset = CNAMClaim.objects.select_related("patient", "invoice").all()
+    serializer_class = CNAMClaimSerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["status", "patient", "invoice"]
+    search_fields = ["cnam_number", "patient__first_name", "patient__last_name", "invoice__invoice_number"]
+    ordering_fields = ["created_at", "amount_claimed", "amount_reimbursed"]

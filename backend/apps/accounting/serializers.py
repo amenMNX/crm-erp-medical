@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Invoice, Payment
+from .models import CNAMClaim, Invoice, Payment
 
 
 class InvoiceSerializer(serializers.ModelSerializer):
@@ -59,3 +59,26 @@ class PaymentSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["id", "invoice_number", "created_at"]
+
+
+class CNAMClaimSerializer(serializers.ModelSerializer):
+    patient_name = serializers.CharField(source="patient.__str__", read_only=True)
+    invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+
+    class Meta:
+        model = CNAMClaim
+        fields = [
+            "id",
+            "patient",
+            "patient_name",
+            "invoice",
+            "invoice_number",
+            "cnam_number",
+            "status",
+            "amount_claimed",
+            "amount_reimbursed",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "patient_name", "invoice_number", "created_at", "updated_at"]

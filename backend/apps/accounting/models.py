@@ -113,3 +113,48 @@ class Payment(models.Model):
 
     def __str__(self):
         return self.payment_number
+
+
+class CNAMClaim(models.Model):
+    """
+    Tracks CNAM (Caisse Nationale d'Assurance Maladie) reimbursement claims
+    tied to an invoice. Field set is based on the audit report's spec
+    reference (section 5.4); no detailed CNAM workflow was otherwise
+    documented, so this covers the minimum needed to track a claim's
+    lifecycle. Revisit if the actual spec has more detail.
+    """
+
+    class Status(models.TextChoices):
+        EN_ATTENTE = "En attente", "En attente"
+        APPROUVEE = "Approuvée", "Approuvée"
+        REJETEE = "Rejetée", "Rejetée"
+        REMBOURSEE = "Remboursée", "Remboursée"
+
+    patient = models.ForeignKey(
+        Patient,
+        on_delete=models.CASCADE,
+        related_name="cnam_claims",
+    )
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="cnam_claims",
+    )
+    cnam_number = models.CharField(max_length=50)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.EN_ATTENTE,
+    )
+    amount_claimed = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    amount_reimbursed = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"CNAM {self.cnam_number} - {self.patient}"

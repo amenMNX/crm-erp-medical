@@ -40,3 +40,60 @@ class Employee(models.Model):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
+
+
+class LeaveRequest(models.Model):
+    
+    class Status(models.TextChoices):
+        EN_ATTENTE = "En attente", "En attente"
+        ACCEPTEE = "Acceptée", "Acceptée"
+        REFUSEE = "Refusée", "Refusée"
+
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name="leave_requests",
+    )
+    date_debut = models.DateField()
+    date_fin = models.DateField()
+    motif = models.CharField(max_length=255, blank=True)
+    statut = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.EN_ATTENTE,
+    )
+    notes = models.TextField(blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="approved_leave_requests",
+        blank=True,
+        null=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.employee} ({self.date_debut} - {self.date_fin})"
+
+
+class Absence(models.Model):
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name="absences",
+    )
+    date = models.DateField()
+    motif = models.CharField(max_length=255, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+
+    def __str__(self):
+        return f"{self.employee} - {self.date}"

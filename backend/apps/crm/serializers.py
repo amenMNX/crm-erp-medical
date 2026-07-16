@@ -1,6 +1,7 @@
+from django.contrib.auth.models import User
 from rest_framework import serializers
 
-from .models import Appointment, Patient, TreatmentPlan, TreatmentSession
+from .models import Appointment, Complaint, Patient, Ticket, TreatmentPlan, TreatmentSession
 
 class PatientSerializer(serializers.ModelSerializer):
     class Meta:
@@ -97,3 +98,58 @@ class TreatmentSessionSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+class AgentSerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ["id", "name"]
+
+    def get_name(self, obj):
+        full_name = obj.get_full_name()
+        return full_name or obj.username
+
+
+class TicketSerializer(serializers.ModelSerializer):
+    client_name = serializers.CharField(source="client.__str__", read_only=True)
+    agents = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=User.objects.all(), required=False
+    )
+    agent_details = AgentSerializer(source="agents", many=True, read_only=True)
+
+    class Meta:
+        model = Ticket
+        fields = [
+            "id",
+            "numero",
+            "titre",
+            "description",
+            "priorite",
+            "statut",
+            "client",
+            "client_name",
+            "agents",
+            "agent_details",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "numero", "client_name", "agent_details", "created_at", "updated_at"]
+
+
+class ComplaintSerializer(serializers.ModelSerializer):
+    client_name = serializers.CharField(source="client.__str__", read_only=True)
+
+    class Meta:
+        model = Complaint
+        fields = [
+            "id",
+            "description",
+            "statut",
+            "client",
+            "client_name",
+            "created_at",
+            "resolved_at",
+        ]
+        read_only_fields = ["id", "client_name", "created_at", "resolved_at"]

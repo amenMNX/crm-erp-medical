@@ -15,12 +15,19 @@ from rest_framework import filters
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.select_related("profile").all().order_by("username")
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAdminUser]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["is_active", "profile__role", "profile__department"]
     search_fields = ["username", "email", "first_name", "last_name", "profile__phone"]
     ordering_fields = ["username", "email", "first_name", "last_name", "date_joined"]
-    
+
+    def get_permissions(self):
+        # Reads (list/retrieve) are needed by any authenticated user for
+        # things like assigning ticket agents — only writes (create/
+        # update/delete users) are admin-only.
+        if self.action in ("list", "retrieve"):
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAdminUser()]
+
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()
 

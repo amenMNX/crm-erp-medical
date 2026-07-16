@@ -2,7 +2,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 # Create your tests here.
-from .models import Appointment, Patient, TreatmentPlan, TreatmentSession
+from .models import Appointment, Complaint, Patient, Ticket, TreatmentPlan, TreatmentSession
 from django.contrib.auth.models import User
 from django.contrib.auth.models import User
 class PatientModelTestCase(TestCase):
@@ -341,3 +341,94 @@ class CrmPermissionTests(TestCase):
         response = self.client.post("/api/crm/patients/", self.patient_data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+class TicketComplaintApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+        self.user = User.objects.create_user(
+            username="support_user",
+            password="testpass123",
+            first_name="Support",
+            last_name="Agent",
+        )
+        self.user.profile.role = "support_client"
+        self.user.profile.save()
+
+        self.client.force_authenticate(user=self.user)
+
+        self.patient = Patient.objects.create(
+            first_name="Sofia",
+            last_name="Martins",
+            cin="CRM-TC-001",
+            phone="22111111",
+            email="sofia@example.com",
+            medical_record_number="MR-TC-001",
+        )
+
+    def test_create_ticket_with_accented_values(self):
+        response = self.client.post(
+            "/api/crm/tickets/",
+            {
+                "titre": "Retard de réponse",
+                "description": "Le patient demande un retour urgent.",
+                "priorite": "Élevée",
+                "statut": "Nouveau",
+                "client": self.patient.id,
+                "agents": [self.user.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["priorite"], "Élevée")
+        self.assertEqual(response.data["agents"], [self.user.id])
+        self.assertTrue(response.data["numero"].startswith("TCK-"))
+
+    def test_update_ticket_status_with_accented_value(self):
+        ticket = Ticket.objects.create(
+            titre="Question facture",
+            description="Demande de clarification.",
+            priorite="Moyenne",
+            statut="Nouveau",
+            client=self.patient,
+        )
+
+        response = self.client.patch(
+            f"/api/crm/tickets/{ticket.id}/",
+            {"statut": "Résolu"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["statut"], "Résolu")
+
+    def test_create_complaint(self):
+        response = self.client.post(
+            "/api/crm/complaints/",
+            {
+                "description": "Réclamation concernant la facturation.",
+                "statut": "Nouvelle",
+                "client": self.patient.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["client_name"], "Sofia Martins")
+
+    def test_update_complaint_status_with_accented_value(self):
+        complaint = Complaint.objects.create(
+            description="Retard dans la prise en charge.",
+            statut="Nouvelle",
+            client=self.patient,
+        )
+
+        response = self.client.patch(
+            f"/api/crm/complaints/{complaint.id}/",
+            {"statut": "Résolue"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["statut"], "Résolue")
