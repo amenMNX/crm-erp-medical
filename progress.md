@@ -1,3 +1,5 @@
+> **⚠️ Superseded.** This is an early evaluation (pre-dates CNAM, audit/Historique, password reset, dashboard KPI work, and the messaging/equipment/dashboard build-out). The "~45-50% Complete" verdict below is no longer accurate — current status lives in `state.md`, and the current gap list/build order lives in `difference.md` + `steps.md`. Kept here for history only; don't use it to judge current completeness.
+
 # Project Evaluation: CRM-ERP for Radiotherapy Center
 
 Based on the specifications document (Cahier des Charges) and the current workspace structure, here's my assessment:

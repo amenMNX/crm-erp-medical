@@ -158,3 +158,86 @@ class CNAMClaim(models.Model):
 
     def __str__(self):
         return f"CNAM {self.cnam_number} - {self.patient}"
+
+class SubscriptionPlan(models.Model):
+    """A named subscription tier (e.g. 'Forfait Standard', 'Forfait VIP').
+
+    Plans are referenced by SubscriptionChange records so the history of
+    what plan a patient was on is preserved even if the plan's label changes.
+    """
+
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    monthly_price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class SubscriptionChange(models.Model):
+    """Records every time a patient's subscription plan is changed.
+
+    This is the "gestion du changement de forme d'abonnement" requirement
+    from the DOCX. Each row is an immutable audit trail entry — the current
+    plan is the one on the most recent row for a given patient. Rows are
+    never edited or deleted.
+    """
+
+    class Reason(models.TextChoices):
+        UPGRADE = "upgrade", "Upgrade"
+        DOWNGRADE = "downgrade", "Downgrade"
+        INITIAL = "initial", "Initial subscription"
+        CANCELLATION = "cancellation", "Cancellation"
+        REACTIVATION = "reactivation", "Reactivation"
+        OTHER = "other", "Other"
+
+    patient = models.ForeignKey(
+        Patient,
+        on_delete=models.CASCADE,
+        related_name="subscription_changes",
+    )
+    previous_plan = models.ForeignKey(
+        SubscriptionPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    new_plan = models.ForeignKey(
+        SubscriptionPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    reason = models.CharField(
+        max_length=20,
+        choices=Reason.choices,
+        default=Reason.OTHER,
+    )
+    notes = models.TextField(blank=True)
+    effective_date = models.DateField()
+    recorded_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="subscription_changes_recorded",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-effective_date", "-created_at"]
+
+    def __str__(self):
+        prev = self.previous_plan.name if self.previous_plan else "None"
+        new = self.new_plan.name if self.new_plan else "None"
+        return f"{self.patient} | {prev} → {new} ({self.effective_date})"

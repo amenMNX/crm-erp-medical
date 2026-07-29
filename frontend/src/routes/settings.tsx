@@ -1,16 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { fetchCurrentUser, updateCurrentUser } from "@/lib/me-api";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -22,13 +24,50 @@ export const Route = createFileRoute("/settings")({
   component: SettingsPage,
 });
 
+function initials(first: string, last: string, username: string) {
+  const from = `${first} ${last}`.trim() || username;
+  return from.split(" ").map((n) => n[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+}
+
 function SettingsPage() {
+  const queryClient = useQueryClient();
+  const meQuery = useQuery({ queryKey: ["me"], queryFn: fetchCurrentUser });
+
   const [profile, setProfile] = useState({
-    name: "Evie Johnson",
-    email: "evie@base.app",
-    role: "Product Manager",
-    bio: "Building beautiful SaaS at Base.",
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    department: "",
   });
+
+  useEffect(() => {
+    if (meQuery.data) {
+      setProfile({
+        first_name: meQuery.data.first_name ?? "",
+        last_name: meQuery.data.last_name ?? "",
+        email: meQuery.data.email ?? "",
+        phone: meQuery.data.profile?.phone ?? "",
+        department: meQuery.data.profile?.department ?? "",
+      });
+    }
+  }, [meQuery.data]);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      updateCurrentUser({
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        email: profile.email,
+        profile: { phone: profile.phone, department: profile.department },
+      }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["me"], data);
+      toast.success("Profile saved");
+    },
+    onError: () => toast.error("Couldn't save your profile"),
+  });
+
   const [notifs, setNotifs] = useState({ email: true, push: false, weekly: true, product: true });
 
   return (
@@ -47,37 +86,56 @@ function SettingsPage() {
               <CardTitle>Profile</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="flex items-center gap-4">
-                <Avatar className="h-16 w-16">
-                  <AvatarFallback className="bg-primary text-primary-foreground text-lg">EJ</AvatarFallback>
-                </Avatar>
-                <div className="space-x-2">
-                  <Button size="sm">Upload</Button>
-                  <Button size="sm" variant="outline">Remove</Button>
+              {meQuery.isLoading ? (
+                <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading profile...
                 </div>
-              </div>
-              <Separator />
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <Label htmlFor="n">Full name</Label>
-                  <Input id="n" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
-                </div>
-                <div>
-                  <Label htmlFor="e">Email</Label>
-                  <Input id="e" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} />
-                </div>
-                <div>
-                  <Label htmlFor="r">Role</Label>
-                  <Input id="r" value={profile.role} onChange={(e) => setProfile({ ...profile, role: e.target.value })} />
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="b">Bio</Label>
-                <Textarea id="b" rows={3} value={profile.bio} onChange={(e) => setProfile({ ...profile, bio: e.target.value })} />
-              </div>
-              <div className="flex justify-end">
-                <Button onClick={() => toast.success("Profile saved")}>Save changes</Button>
-              </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-4">
+                    <Avatar className="h-16 w-16">
+                      <AvatarFallback className="bg-primary text-primary-foreground text-lg">
+                        {initials(profile.first_name, profile.last_name, meQuery.data?.username ?? "")}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium">{meQuery.data?.username}</p>
+                      {meQuery.data?.profile?.role && (
+                        <p className="text-xs text-muted-foreground capitalize">{meQuery.data.profile.role}</p>
+                      )}
+                    </div>
+                  </div>
+                  <Separator />
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <Label htmlFor="fn">First name</Label>
+                      <Input id="fn" value={profile.first_name} onChange={(e) => setProfile({ ...profile, first_name: e.target.value })} />
+                    </div>
+                    <div>
+                      <Label htmlFor="ln">Last name</Label>
+                      <Input id="ln" value={profile.last_name} onChange={(e) => setProfile({ ...profile, last_name: e.target.value })} />
+                    </div>
+                    <div>
+                      <Label htmlFor="e">Email</Label>
+                      <Input id="e" type="email" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} />
+                    </div>
+                    <div>
+                      <Label htmlFor="ph">Phone</Label>
+                      <Input id="ph" value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} />
+                    </div>
+                    <div>
+                      <Label htmlFor="dep">Department</Label>
+                      <Input id="dep" value={profile.department} onChange={(e) => setProfile({ ...profile, department: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+                      {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Save changes
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

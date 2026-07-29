@@ -10,33 +10,47 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TicketsRouteImport } from './routes/tickets'
+import { Route as TeamScheduleRouteImport } from './routes/team-schedule'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScheduleRouteImport } from './routes/schedule'
-import { Route as Roles_permissionRouteImport } from './routes/roles _permission'
+import { Route as SalaryAdvancesRouteImport } from './routes/salary-advances'
+import { Route as Roles_permissionRouteImport } from './routes/roles_permission'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReportsRouteImport } from './routes/reports'
-import { Route as ProductsRouteImport } from './routes/products'
+import { Route as PortalRouteImport } from './routes/portal'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as MessagesRouteImport } from './routes/messages'
 import { Route as LeavesRouteImport } from './routes/leaves'
+import { Route as IncidentsRouteImport } from './routes/incidents'
+import { Route as HistoriqueRouteImport } from './routes/historique'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
+import { Route as CnamRouteImport } from './routes/cnam'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as BoardRouteImport } from './routes/board'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AbsencesRouteImport } from './routes/absences'
+import { Route as AbonnementsRouteImport } from './routes/abonnements'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PatientsIndexRouteImport } from './routes/patients.index'
 import { Route as InvoicesIndexRouteImport } from './routes/invoices.index'
 import { Route as PatientsNewRouteImport } from './routes/patients.new'
 import { Route as InvoicesNewRouteImport } from './routes/invoices.new'
+import { Route as InvoicesInvoiceIdRouteImport } from './routes/invoices.$invoiceId'
 
 const TicketsRoute = TicketsRouteImport.update({
   id: '/tickets',
   path: '/tickets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TeamScheduleRoute = TeamScheduleRouteImport.update({
+  id: '/team-schedule',
+  path: '/team-schedule',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -59,9 +73,19 @@ const ScheduleRoute = ScheduleRouteImport.update({
   path: '/schedule',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SalaryAdvancesRoute = SalaryAdvancesRouteImport.update({
+  id: '/salary-advances',
+  path: '/salary-advances',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const Roles_permissionRoute = Roles_permissionRouteImport.update({
-  id: '/roles _permission',
-  path: '/roles _permission',
+  id: '/roles_permission',
+  path: '/roles_permission',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReportsRoute = ReportsRouteImport.update({
@@ -69,9 +93,9 @@ const ReportsRoute = ReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProductsRoute = ProductsRouteImport.update({
-  id: '/products',
-  path: '/products',
+const PortalRoute = PortalRouteImport.update({
+  id: '/portal',
+  path: '/portal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PaymentsRoute = PaymentsRouteImport.update({
@@ -94,6 +118,21 @@ const LeavesRoute = LeavesRouteImport.update({
   path: '/leaves',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IncidentsRoute = IncidentsRouteImport.update({
+  id: '/incidents',
+  path: '/incidents',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoriqueRoute = HistoriqueRouteImport.update({
+  id: '/historique',
+  path: '/historique',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const EmployeesRoute = EmployeesRouteImport.update({
   id: '/employees',
   path: '/employees',
@@ -107,6 +146,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const ComplaintsRoute = ComplaintsRouteImport.update({
   id: '/complaints',
   path: '/complaints',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CnamRoute = CnamRouteImport.update({
+  id: '/cnam',
+  path: '/cnam',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CalendarRoute = CalendarRouteImport.update({
@@ -127,6 +171,11 @@ const AnalyticsRoute = AnalyticsRouteImport.update({
 const AbsencesRoute = AbsencesRouteImport.update({
   id: '/absences',
   path: '/absences',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AbonnementsRoute = AbonnementsRouteImport.update({
+  id: '/abonnements',
+  path: '/abonnements',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -154,28 +203,42 @@ const InvoicesNewRoute = InvoicesNewRouteImport.update({
   path: '/invoices/new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InvoicesInvoiceIdRoute = InvoicesInvoiceIdRouteImport.update({
+  id: '/invoices/$invoiceId',
+  path: '/invoices/$invoiceId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/abonnements': typeof AbonnementsRoute
   '/absences': typeof AbsencesRoute
   '/analytics': typeof AnalyticsRoute
   '/board': typeof BoardRoute
   '/calendar': typeof CalendarRoute
+  '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRoute
+  '/forgot-password': typeof ForgotPasswordRoute
+  '/historique': typeof HistoriqueRoute
+  '/incidents': typeof IncidentsRoute
   '/leaves': typeof LeavesRoute
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/payments': typeof PaymentsRoute
-  '/products': typeof ProductsRoute
+  '/portal': typeof PortalRoute
   '/reports': typeof ReportsRoute
-  '/roles _permission': typeof Roles_permissionRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/roles_permission': typeof Roles_permissionRoute
+  '/salary-advances': typeof SalaryAdvancesRoute
   '/schedule': typeof ScheduleRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
+  '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices/': typeof InvoicesIndexRoute
@@ -183,25 +246,34 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/abonnements': typeof AbonnementsRoute
   '/absences': typeof AbsencesRoute
   '/analytics': typeof AnalyticsRoute
   '/board': typeof BoardRoute
   '/calendar': typeof CalendarRoute
+  '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRoute
+  '/forgot-password': typeof ForgotPasswordRoute
+  '/historique': typeof HistoriqueRoute
+  '/incidents': typeof IncidentsRoute
   '/leaves': typeof LeavesRoute
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/payments': typeof PaymentsRoute
-  '/products': typeof ProductsRoute
+  '/portal': typeof PortalRoute
   '/reports': typeof ReportsRoute
-  '/roles _permission': typeof Roles_permissionRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/roles_permission': typeof Roles_permissionRoute
+  '/salary-advances': typeof SalaryAdvancesRoute
   '/schedule': typeof ScheduleRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
+  '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices': typeof InvoicesIndexRoute
@@ -210,25 +282,34 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/abonnements': typeof AbonnementsRoute
   '/absences': typeof AbsencesRoute
   '/analytics': typeof AnalyticsRoute
   '/board': typeof BoardRoute
   '/calendar': typeof CalendarRoute
+  '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRoute
+  '/forgot-password': typeof ForgotPasswordRoute
+  '/historique': typeof HistoriqueRoute
+  '/incidents': typeof IncidentsRoute
   '/leaves': typeof LeavesRoute
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/payments': typeof PaymentsRoute
-  '/products': typeof ProductsRoute
+  '/portal': typeof PortalRoute
   '/reports': typeof ReportsRoute
-  '/roles _permission': typeof Roles_permissionRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/roles_permission': typeof Roles_permissionRoute
+  '/salary-advances': typeof SalaryAdvancesRoute
   '/schedule': typeof ScheduleRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
+  '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices/': typeof InvoicesIndexRoute
@@ -238,25 +319,34 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/abonnements'
     | '/absences'
     | '/analytics'
     | '/board'
     | '/calendar'
+    | '/cnam'
     | '/complaints'
     | '/dashboard'
     | '/employees'
+    | '/forgot-password'
+    | '/historique'
+    | '/incidents'
     | '/leaves'
     | '/messages'
     | '/notifications'
     | '/payments'
-    | '/products'
+    | '/portal'
     | '/reports'
-    | '/roles _permission'
+    | '/reset-password'
+    | '/roles_permission'
+    | '/salary-advances'
     | '/schedule'
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/team-schedule'
     | '/tickets'
+    | '/invoices/$invoiceId'
     | '/invoices/new'
     | '/patients/new'
     | '/invoices/'
@@ -264,25 +354,34 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/abonnements'
     | '/absences'
     | '/analytics'
     | '/board'
     | '/calendar'
+    | '/cnam'
     | '/complaints'
     | '/dashboard'
     | '/employees'
+    | '/forgot-password'
+    | '/historique'
+    | '/incidents'
     | '/leaves'
     | '/messages'
     | '/notifications'
     | '/payments'
-    | '/products'
+    | '/portal'
     | '/reports'
-    | '/roles _permission'
+    | '/reset-password'
+    | '/roles_permission'
+    | '/salary-advances'
     | '/schedule'
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/team-schedule'
     | '/tickets'
+    | '/invoices/$invoiceId'
     | '/invoices/new'
     | '/patients/new'
     | '/invoices'
@@ -290,25 +389,34 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/abonnements'
     | '/absences'
     | '/analytics'
     | '/board'
     | '/calendar'
+    | '/cnam'
     | '/complaints'
     | '/dashboard'
     | '/employees'
+    | '/forgot-password'
+    | '/historique'
+    | '/incidents'
     | '/leaves'
     | '/messages'
     | '/notifications'
     | '/payments'
-    | '/products'
+    | '/portal'
     | '/reports'
-    | '/roles _permission'
+    | '/reset-password'
+    | '/roles_permission'
+    | '/salary-advances'
     | '/schedule'
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/team-schedule'
     | '/tickets'
+    | '/invoices/$invoiceId'
     | '/invoices/new'
     | '/patients/new'
     | '/invoices/'
@@ -317,25 +425,34 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AbonnementsRoute: typeof AbonnementsRoute
   AbsencesRoute: typeof AbsencesRoute
   AnalyticsRoute: typeof AnalyticsRoute
   BoardRoute: typeof BoardRoute
   CalendarRoute: typeof CalendarRoute
+  CnamRoute: typeof CnamRoute
   ComplaintsRoute: typeof ComplaintsRoute
   DashboardRoute: typeof DashboardRoute
   EmployeesRoute: typeof EmployeesRoute
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
+  HistoriqueRoute: typeof HistoriqueRoute
+  IncidentsRoute: typeof IncidentsRoute
   LeavesRoute: typeof LeavesRoute
   MessagesRoute: typeof MessagesRoute
   NotificationsRoute: typeof NotificationsRoute
   PaymentsRoute: typeof PaymentsRoute
-  ProductsRoute: typeof ProductsRoute
+  PortalRoute: typeof PortalRoute
   ReportsRoute: typeof ReportsRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   Roles_permissionRoute: typeof Roles_permissionRoute
+  SalaryAdvancesRoute: typeof SalaryAdvancesRoute
   ScheduleRoute: typeof ScheduleRoute
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
+  TeamScheduleRoute: typeof TeamScheduleRoute
   TicketsRoute: typeof TicketsRoute
+  InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
   InvoicesNewRoute: typeof InvoicesNewRoute
   PatientsNewRoute: typeof PatientsNewRoute
   InvoicesIndexRoute: typeof InvoicesIndexRoute
@@ -349,6 +466,13 @@ declare module '@tanstack/react-router' {
       path: '/tickets'
       fullPath: '/tickets'
       preLoaderRoute: typeof TicketsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/team-schedule': {
+      id: '/team-schedule'
+      path: '/team-schedule'
+      fullPath: '/team-schedule'
+      preLoaderRoute: typeof TeamScheduleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -379,11 +503,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ScheduleRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/roles _permission': {
-      id: '/roles _permission'
-      path: '/roles _permission'
-      fullPath: '/roles _permission'
+    '/salary-advances': {
+      id: '/salary-advances'
+      path: '/salary-advances'
+      fullPath: '/salary-advances'
+      preLoaderRoute: typeof SalaryAdvancesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/roles_permission': {
+      id: '/roles_permission'
+      path: '/roles_permission'
+      fullPath: '/roles_permission'
       preLoaderRoute: typeof Roles_permissionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reports': {
@@ -393,11 +531,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/products': {
-      id: '/products'
-      path: '/products'
-      fullPath: '/products'
-      preLoaderRoute: typeof ProductsRouteImport
+    '/portal': {
+      id: '/portal'
+      path: '/portal'
+      fullPath: '/portal'
+      preLoaderRoute: typeof PortalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/payments': {
@@ -428,6 +566,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LeavesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/incidents': {
+      id: '/incidents'
+      path: '/incidents'
+      fullPath: '/incidents'
+      preLoaderRoute: typeof IncidentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/historique': {
+      id: '/historique'
+      path: '/historique'
+      fullPath: '/historique'
+      preLoaderRoute: typeof HistoriqueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/employees': {
       id: '/employees'
       path: '/employees'
@@ -447,6 +606,13 @@ declare module '@tanstack/react-router' {
       path: '/complaints'
       fullPath: '/complaints'
       preLoaderRoute: typeof ComplaintsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cnam': {
+      id: '/cnam'
+      path: '/cnam'
+      fullPath: '/cnam'
+      preLoaderRoute: typeof CnamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/calendar': {
@@ -475,6 +641,13 @@ declare module '@tanstack/react-router' {
       path: '/absences'
       fullPath: '/absences'
       preLoaderRoute: typeof AbsencesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/abonnements': {
+      id: '/abonnements'
+      path: '/abonnements'
+      fullPath: '/abonnements'
+      preLoaderRoute: typeof AbonnementsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -512,30 +685,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InvoicesNewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invoices/$invoiceId': {
+      id: '/invoices/$invoiceId'
+      path: '/invoices/$invoiceId'
+      fullPath: '/invoices/$invoiceId'
+      preLoaderRoute: typeof InvoicesInvoiceIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AbonnementsRoute: AbonnementsRoute,
   AbsencesRoute: AbsencesRoute,
   AnalyticsRoute: AnalyticsRoute,
   BoardRoute: BoardRoute,
   CalendarRoute: CalendarRoute,
+  CnamRoute: CnamRoute,
   ComplaintsRoute: ComplaintsRoute,
   DashboardRoute: DashboardRoute,
   EmployeesRoute: EmployeesRoute,
+  ForgotPasswordRoute: ForgotPasswordRoute,
+  HistoriqueRoute: HistoriqueRoute,
+  IncidentsRoute: IncidentsRoute,
   LeavesRoute: LeavesRoute,
   MessagesRoute: MessagesRoute,
   NotificationsRoute: NotificationsRoute,
   PaymentsRoute: PaymentsRoute,
-  ProductsRoute: ProductsRoute,
+  PortalRoute: PortalRoute,
   ReportsRoute: ReportsRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   Roles_permissionRoute: Roles_permissionRoute,
+  SalaryAdvancesRoute: SalaryAdvancesRoute,
   ScheduleRoute: ScheduleRoute,
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
+  TeamScheduleRoute: TeamScheduleRoute,
   TicketsRoute: TicketsRoute,
+  InvoicesInvoiceIdRoute: InvoicesInvoiceIdRoute,
   InvoicesNewRoute: InvoicesNewRoute,
   PatientsNewRoute: PatientsNewRoute,
   InvoicesIndexRoute: InvoicesIndexRoute,

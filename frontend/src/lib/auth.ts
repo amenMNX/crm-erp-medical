@@ -1,39 +1,46 @@
+// Sprint 0 security fix: all token storage migrated from localStorage to
+// sessionStorage (access token + user info) and in-memory (refresh token).
+// See api.ts for the full rationale.
+// auth.ts delegates to the api.ts helpers so token storage logic lives
+// in exactly one place.
+
+import {
+  setAuthTokens,
+  clearAuthTokens,
+  getStoredAuthToken,
+  setStoredUser,
+  getStoredUser,
+} from "./api";
+
 export type AuthUser = {
+  id: number;
+  username: string;
   name: string;
   email: string;
+  role?: string;
 };
-
-const AUTH_USER_KEY = "crm-erp-auth-user";
-const AUTH_TOKEN_KEY = "crm-erp-auth-token";
 
 export function getAuthUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
-
-  try {
-    const raw = window.localStorage.getItem(AUTH_USER_KEY);
-    return raw ? (JSON.parse(raw) as AuthUser) : null;
-  } catch {
-    return null;
-  }
+  return getStoredUser() as AuthUser | null;
 }
 
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(AUTH_TOKEN_KEY);
+  return getStoredAuthToken();
 }
 
-export function isAuthenticated() {
+export function isAuthenticated(): boolean {
   return Boolean(getAuthUser() && getAuthToken());
 }
 
-export function login(user: AuthUser, token: string) {
+export function login(user: AuthUser, accessToken: string, refreshToken: string): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-  window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+  setAuthTokens(accessToken, refreshToken);
+  setStoredUser(user);
 }
 
-export function logout() {
+export function logout(): void {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(AUTH_USER_KEY);
-  window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  clearAuthTokens();
 }

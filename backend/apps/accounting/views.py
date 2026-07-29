@@ -1,8 +1,8 @@
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, viewsets
 from apps.accounts.permissions import ReadOnlyOrRole
-from .models import CNAMClaim, Invoice, Payment
-from .serializers import CNAMClaimSerializer, InvoiceSerializer, PaymentSerializer
+from .models import CNAMClaim, Invoice, Payment, SubscriptionPlan, SubscriptionChange
+from .serializers import CNAMClaimSerializer, InvoiceSerializer, PaymentSerializer, SubscriptionPlanSerializer, SubscriptionChangeSerializer
 
 class AccountingPermission(ReadOnlyOrRole):
     allowed_roles = ["admin", "accountant"]
@@ -45,3 +45,47 @@ class CNAMClaimViewSet(viewsets.ModelViewSet):
     filterset_fields = ["status", "patient", "invoice"]
     search_fields = ["cnam_number", "patient__first_name", "patient__last_name", "invoice__invoice_number"]
     ordering_fields = ["created_at", "amount_claimed", "amount_reimbursed"]
+
+class SubscriptionPlanViewSet(viewsets.ModelViewSet):
+    """Admin-managed list of available subscription plans."""
+    queryset = SubscriptionPlan.objects.all()
+    serializer_class = SubscriptionPlanSerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [filters.SearchFilter]
+    search_fields = ["name", "description"]
+
+
+class SubscriptionChangeViewSet(viewsets.ModelViewSet):
+    """Immutable log of patient subscription changes.
+
+    POST creates a new change record (recorded_by is set automatically).
+    PUT/PATCH/DELETE are disabled — the history is append-only.
+    """
+    queryset = SubscriptionChange.objects.select_related(
+        "patient", "previous_plan", "new_plan", "recorded_by"
+    ).all()
+    serializer_class = SubscriptionChangeSerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["patient", "new_plan", "reason"]
+    search_fields = ["patient__first_name", "patient__last_name", "notes"]
+    ordering_fields = ["effective_date", "created_at"]
+
+    def update(self, request, *args, **kwargs):
+        from rest_framework.response import Response
+        from rest_framework import status
+        return Response(
+            {"detail": "Subscription change records are immutable."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        from rest_framework.response import Response
+        from rest_framework import status
+        return Response(
+            {"detail": "Subscription change records cannot be deleted."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )

@@ -1,10 +1,18 @@
+import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -19,7 +27,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Search, MoreHorizontal, Download, Filter } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  deleteInvoice,
+  fetchInvoices,
+  type ApiInvoice,
+  type InvoiceStatus,
+} from "@/lib/invoices-api";
 
 export const Route = createFileRoute("/invoices/")({
   head: () => ({
@@ -31,24 +46,56 @@ export const Route = createFileRoute("/invoices/")({
   component: InvoicesPage,
 });
 
-const invoices = [
-  { id: "#IN012", customer: "Jesse Thomas", email: "jesse.t@example.com", date: "12 Feb 2024", total: "$248.00", status: "Completed" },
-  { id: "#IN013", customer: "Ann Vetrov", email: "ann.vetrov@example.com", date: "13 Feb 2024", total: "$186.00", status: "Pending" },
-  { id: "#IN014", customer: "Casey Turner", email: "casey.t@example.com", date: "14 Feb 2024", total: "$92.00", status: "Cancelled" },
-  { id: "#IN015", customer: "Sofia Martins", email: "s.martins@example.com", date: "15 Feb 2024", total: "$520.00", status: "Completed" },
-  { id: "#IN016", customer: "Nika Kova", email: "nika@example.com", date: "16 Feb 2024", total: "$310.00", status: "Pending" },
-  { id: "#IN017", customer: "Marina Lee", email: "marina.lee@example.com", date: "17 Feb 2024", total: "$149.00", status: "Completed" },
-  { id: "#IN018", customer: "Fabricio Souza", email: "fabricio@example.com", date: "18 Feb 2024", total: "$88.00", status: "Cancelled" },
-  { id: "#IN019", customer: "Riko Hakim", email: "riko.h@example.com", date: "19 Feb 2024", total: "$412.00", status: "Completed" },
-];
+const statuses: InvoiceStatus[] = ["draft", "issued", "paid", "cancelled"];
 
-function statusColor(status: string) {
-  if (status === "Completed") return "bg-success/15 text-success border-0";
-  if (status === "Pending") return "bg-warning/15 text-warning border-0";
-  return "bg-destructive/15 text-destructive border-0";
+function statusLabel(status: InvoiceStatus) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function statusColor(status: InvoiceStatus) {
+  if (status === "paid") return "bg-success/15 text-success border-0";
+  if (status === "issued") return "bg-warning/15 text-warning border-0";
+  if (status === "cancelled") return "bg-destructive/15 text-destructive border-0";
+  return "bg-muted text-muted-foreground border-0";
+}
+
+function formatMoney(value: string) {
+  const num = Number(value);
+  return Number.isFinite(num) ? `$${num.toFixed(2)}` : value;
 }
 
 function InvoicesPage() {
+  const queryClient = useQueryClient();
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const invoicesQuery = useQuery({ queryKey: ["invoices"], queryFn: fetchInvoices });
+  const invoices = invoicesQuery.data ?? [];
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteInvoice,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      toast.success("Invoice deleted");
+    },
+    onError: () => toast.error("Failed to delete invoice"),
+  });
+
+  const filteredInvoices = useMemo(() => {
+    const q = query.trim().toLowerCase();
+
+    return invoices.filter((invoice: ApiInvoice) => {
+      const matchesQuery =
+        !q ||
+        invoice.invoice_number.toLowerCase().includes(q) ||
+        invoice.patient_name.toLowerCase().includes(q);
+
+      const matchesStatus = statusFilter === "all" || invoice.status === statusFilter;
+
+      return matchesQuery && matchesStatus;
+    });
+  }, [invoices, query, statusFilter]);
+
   return (
     <AppShell
       title="Invoice List"
@@ -65,58 +112,109 @@ function InvoicesPage() {
           <div className="flex flex-wrap items-center gap-2 p-4 border-b">
             <div className="relative flex-1 min-w-[200px] max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search invoice..." className="pl-9" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search invoice..."
+                className="pl-9"
+              />
             </div>
-            <Button variant="outline" size="sm">
-              <Filter className="h-4 w-4" /> Filter
-            </Button>
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4" /> Export
-            </Button>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {statuses.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {statusLabel(status)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10"><Checkbox /></TableHead>
-                <TableHead>Invoice</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-10"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {invoices.map((i) => (
-                <TableRow key={i.id}>
-                  <TableCell><Checkbox /></TableCell>
-                  <TableCell className="font-medium">{i.id}</TableCell>
-                  <TableCell>{i.customer}</TableCell>
-                  <TableCell className="text-muted-foreground">{i.email}</TableCell>
-                  <TableCell className="text-muted-foreground">{i.date}</TableCell>
-                  <TableCell className="font-medium">{i.total}</TableCell>
-                  <TableCell>
-                    <Badge className={statusColor(i.status)}>{i.status}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem>View</DropdownMenuItem>
-                        <DropdownMenuItem>Edit</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
+
+          {invoicesQuery.isLoading && (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading invoices...
+            </div>
+          )}
+
+          {!invoicesQuery.isLoading && invoicesQuery.error && (
+            <div className="m-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              Couldn't load invoices. Please refresh the page.
+            </div>
+          )}
+
+          {!invoicesQuery.isLoading && !invoicesQuery.error && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Patient</TableHead>
+                  <TableHead>Issue Date</TableHead>
+                  <TableHead>Due Date</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Balance Due</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-10"></TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {filteredInvoices.map((invoice) => (
+                  <TableRow key={invoice.id}>
+                    <TableCell className="font-medium">{invoice.invoice_number}</TableCell>
+                    <TableCell>{invoice.patient_name}</TableCell>
+                    <TableCell className="text-muted-foreground">{invoice.issue_date}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {invoice.due_date || "—"}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {formatMoney(invoice.total_amount)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatMoney(invoice.balance_due)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={statusColor(invoice.status)}>
+                        {statusLabel(invoice.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                        <DropdownMenuItem asChild>
+                          <Link to="/invoices/$invoiceId" params={{ invoiceId: String(invoice.id) }}>
+                            View / Edit
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={() => deleteMutation.mutate(invoice.id)}
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+
+                {filteredInvoices.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                      No invoices found.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </AppShell>

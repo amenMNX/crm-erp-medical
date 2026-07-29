@@ -200,6 +200,83 @@ class Ticket(models.Model):
         return candidate
 
 
+class Incident(models.Model):
+    # Distinct from Ticket per cahier des charges §3 Périmètre, which lists
+    # "gestion des incidents" separately from "gestion des tickets" and
+    # "gestion des réclamations". Mirrors Ticket's priority/status shape so
+    # the two stay easy to compare, but is its own entity/workflow.
+    class Priority(models.TextChoices):
+        FAIBLE = "Faible", "Faible"
+        MOYENNE = "Moyenne", "Moyenne"
+        ELEVEE = "Élevée", "Élevée"
+        CRITIQUE = "Critique", "Critique"
+
+    class Status(models.TextChoices):
+        NOUVEAU = "Nouveau", "Nouveau"
+        EN_COURS = "En cours", "En cours"
+        EN_ATTENTE = "En attente", "En attente"
+        RESOLU = "Résolu", "Résolu"
+        FERME = "Fermé", "Fermé"
+
+    numero = models.CharField(max_length=50, unique=True, editable=False)
+    titre = models.CharField(max_length=255)
+    description = models.TextField()
+    priorite = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.FAIBLE,
+    )
+    statut = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NOUVEAU,
+    )
+    patient = models.ForeignKey(
+        Patient,
+        on_delete=models.CASCADE,
+        related_name="incidents",
+        blank=True,
+        null=True,
+    )
+    equipment_or_location = models.CharField(max_length=255, blank=True)
+    reported_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="reported_incidents",
+        blank=True,
+        null=True,
+    )
+    agents = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name="assigned_incidents",
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.numero} - {self.titre}"
+
+    def save(self, *args, **kwargs):
+        if not self.numero:
+            self.numero = self._generate_numero()
+        super().save(*args, **kwargs)
+
+    @staticmethod
+    def _generate_numero():
+        last = Incident.objects.order_by("-id").first()
+        next_id = (last.id + 1) if last else 1
+        candidate = f"INC-{next_id:03d}"
+        while Incident.objects.filter(numero=candidate).exists():
+            next_id += 1
+            candidate = f"INC-{next_id:03d}"
+        return candidate
+
+
 class Complaint(models.Model):
     # Values match frontend/src/lib/domain.ts ComplaintStatus exactly.
     class Status(models.TextChoices):
@@ -236,3 +313,38 @@ class Complaint(models.Model):
         elif self.statut not in (self.Status.RESOLUE, self.Status.FERMEE):
             self.resolved_at = None
         super().save(*args, **kwargs)
+
+class TicketComment(models.Model):
+    """An agent intervention or comment on a Ticket.
+
+    Distinct from AuditLogEntry (which records *what* changed) — this is
+    a free-text note the agent intentionally writes to document their work,
+    communicate with colleagues, or record the resolution steps taken.
+    This is the "historique interventions" / "commentaires" workflow the
+    DOCX requires alongside the ticket status lifecycle.
+    """
+
+    ticket = models.ForeignKey(
+        Ticket,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="ticket_comments",
+    )
+    body = models.TextField()
+    # Mark as "intervention" (field visit, call, remote action) vs plain note,
+    # so the UI can filter or badge them separately.
+    is_intervention = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"Comment on {self.ticket.numero} by {self.author}"

@@ -9,6 +9,7 @@ export type ApiEmployee = {
   employee_number: string;
   first_name: string;
   last_name: string;
+  date_naissance: string | null;
   job_title: string;
   department: string;
   phone: string;
@@ -37,6 +38,7 @@ export type EmployeeWritePayload = {
   employee_number: string;
   first_name: string;
   last_name: string;
+  date_naissance?: string | null;
   job_title: string;
   department?: string;
   phone?: string;

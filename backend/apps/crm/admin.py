@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 # Register your models here.
-from .models import Appointment, Patient, TreatmentPlan, TreatmentSession
+from .models import Appointment, Patient, TreatmentPlan, TreatmentSession, Incident
 
 @admin.register(Patient)
 class PatientAdmin(admin.ModelAdmin):
@@ -73,3 +73,10 @@ class TreatmentSessionAdmin(admin.ModelAdmin):
         "machine",
         "room",
     )
+
+@admin.register(Incident)
+class IncidentAdmin(admin.ModelAdmin):
+    list_display = ('numero', 'titre', 'statut', 'priorite', 'equipment_or_location', 'created_at')
+    list_filter = ('statut', 'priorite')
+    search_fields = ('numero', 'titre', 'equipment_or_location')
+    readonly_fields = ('numero', 'created_at', 'updated_at')

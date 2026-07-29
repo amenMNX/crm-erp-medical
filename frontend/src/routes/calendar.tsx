@@ -1,11 +1,19 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -14,8 +22,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { fetchAppointments, createAppointment, type ApiAppointment } from "@/lib/appointments-api";
+import { fetchPatients } from "@/lib/patients-api";
 
 export const Route = createFileRoute("/calendar")({
   head: () => ({
@@ -37,16 +47,15 @@ interface Event {
   color: string;
 }
 
-const seedEvents: Event[] = [
-  { id: 1, date: "2024-12-04", time: "09:00", title: "Client Call — Nika", color: "bg-primary/20 text-primary" },
-  { id: 2, date: "2024-12-04", time: "13:00", title: "Design Review", color: "bg-info/20 text-info" },
-  { id: 3, date: "2024-12-11", time: "10:30", title: "Sprint Planning", color: "bg-warning/20 text-warning" },
-  { id: 4, date: "2024-12-18", time: "15:00", title: "Product Launch", color: "bg-success/20 text-success" },
-  { id: 5, date: "2024-12-21", time: "18:00", title: "Team Dinner", color: "bg-destructive/20 text-destructive" },
-];
-
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const STATUS_COLOR: Record<string, string> = {
+  scheduled: "bg-primary/20 text-primary",
+  confirmed: "bg-info/20 text-info",
+  cancelled: "bg-destructive/20 text-destructive",
+  done: "bg-success/20 text-success",
+};
 
 function fmt(d: Date) {
   const y = d.getFullYear();
@@ -55,12 +64,46 @@ function fmt(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
+function toEvent(a: ApiAppointment): Event {
+  const d = new Date(a.appointment_date);
+  return {
+    id: a.id,
+    date: fmt(d),
+    time: d.toTimeString().slice(0, 5),
+    title: a.title,
+    color: STATUS_COLOR[a.status] ?? "bg-muted text-muted-foreground",
+  };
+}
+
 function CalendarPage() {
+  const queryClient = useQueryClient();
   const [view, setView] = useState<View>("month");
-  const [cursor, setCursor] = useState(new Date(2024, 11, 1));
-  const [events, setEvents] = useState<Event[]>(seedEvents);
+  const [cursor, setCursor] = useState(new Date());
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", date: fmt(new Date()), time: "09:00", notes: "" });
+  const [form, setForm] = useState({ title: "", date: fmt(new Date()), time: "09:00", notes: "", patient: "" });
+
+  const appointmentsQuery = useQuery({ queryKey: ["appointments"], queryFn: fetchAppointments });
+  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: fetchPatients });
+  const patients = patientsQuery.data ?? [];
+
+  const events = useMemo(() => (appointmentsQuery.data ?? []).map(toEvent), [appointmentsQuery.data]);
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      createAppointment({
+        patient: Number(form.patient),
+        title: form.title,
+        appointment_date: new Date(`${form.date}T${form.time}:00`).toISOString(),
+        reason: form.notes,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      toast.success("Event created", { description: form.title });
+      setOpen(false);
+      setForm({ title: "", date: fmt(new Date()), time: "09:00", notes: "", patient: "" });
+    },
+    onError: () => toast.error("Couldn't create the event"),
+  });
 
   const navigatePrev = () => {
     const d = new Date(cursor);
@@ -82,17 +125,11 @@ function CalendarPage() {
       toast.error("Title is required");
       return;
     }
-    const colors = ["bg-primary/20 text-primary", "bg-info/20 text-info", "bg-warning/20 text-warning", "bg-success/20 text-success"];
-    setEvents((e) => [...e, {
-      id: Date.now(),
-      date: form.date,
-      time: form.time,
-      title: form.title,
-      color: colors[e.length % colors.length],
-    }]);
-    toast.success("Event created", { description: form.title });
-    setOpen(false);
-    setForm({ title: "", date: fmt(new Date()), time: "09:00", notes: "" });
+    if (!form.patient) {
+      toast.error("Patient is required");
+      return;
+    }
+    createMutation.mutate();
   };
 
   const label = view === "year"
@@ -130,7 +167,22 @@ function CalendarPage() {
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="title">Title</Label>
-                  <Input id="title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Meeting with client" />
+                  <Input id="title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Consultation follow-up" />
+                </div>
+                <div>
+                  <Label>Patient</Label>
+                  <Select value={form.patient} onValueChange={(v) => setForm({ ...form, patient: v })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a patient" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {patients.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.first_name} {p.last_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -143,13 +195,16 @@ function CalendarPage() {
                   </div>
                 </div>
                 <div>
-                  <Label htmlFor="enotes">Notes</Label>
+                  <Label htmlFor="enotes">Reason / notes</Label>
                   <Textarea id="enotes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} />
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-                <Button onClick={createEvent}>Create Event</Button>
+                <Button onClick={createEvent} disabled={createMutation.isPending}>
+                  {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Create Event
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -168,14 +223,22 @@ function CalendarPage() {
               </Button>
               <h2 className="text-lg font-semibold ml-2">{label}</h2>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setCursor(new Date(2024, 11, 1))}>
+            <Button variant="ghost" size="sm" onClick={() => setCursor(new Date())}>
               Today
             </Button>
           </div>
 
-          {view === "month" && <MonthView cursor={cursor} events={events} />}
-          {view === "year" && <YearView year={cursor.getFullYear()} onPickMonth={(m) => { setCursor(new Date(cursor.getFullYear(), m, 1)); setView("month"); }} />}
-          {view === "day" && <DayView cursor={cursor} events={events} />}
+          {appointmentsQuery.isLoading ? (
+            <div className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading appointments...
+            </div>
+          ) : (
+            <>
+              {view === "month" && <MonthView cursor={cursor} events={events} />}
+              {view === "year" && <YearView year={cursor.getFullYear()} onPickMonth={(m) => { setCursor(new Date(cursor.getFullYear(), m, 1)); setView("month"); }} />}
+              {view === "day" && <DayView cursor={cursor} events={events} />}
+            </>
+          )}
         </CardContent>
       </Card>
     </AppShell>

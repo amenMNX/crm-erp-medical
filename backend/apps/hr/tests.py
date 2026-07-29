@@ -3,7 +3,7 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from .models import Employee
+from .models import Employee, SalaryAdvance
 
 
 class EmployeeApiTests(TestCase):
@@ -109,3 +109,112 @@ class HrPermissionTests(TestCase):
         response = self.client.post("/api/hr/employees/", self.employee_data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+class SalaryAdvanceApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.hr_user = User.objects.create_user(
+            username="hr_advance_admin",
+            password="testpass123",
+        )
+        self.hr_user.profile.role = "hr"
+        self.hr_user.profile.save()
+
+        self.employee = Employee.objects.create(
+            employee_number="EMP-ADV-0001",
+            first_name="Leila",
+            last_name="Trabelsi",
+            job_title="Technicien",
+            department="Radiotherapy",
+            contract_type="cdi",
+        )
+
+        self.advance_data = {
+            "employee": self.employee.id,
+            "amount": "500.00",
+            "request_date": "2026-07-20",
+            "reason": "Frais medicaux",
+        }
+
+    def test_secretary_cannot_create_salary_advance(self):
+        user = User.objects.create_user(username="secretary_advance_user", password="testpass123")
+        user.profile.role = "secretary"
+        user.profile.save()
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post("/api/hr/salary-advances/", self.advance_data, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_hr_can_create_salary_advance(self):
+        self.client.force_authenticate(user=self.hr_user)
+
+        response = self.client.post("/api/hr/salary-advances/", self.advance_data, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(SalaryAdvance.objects.count(), 1)
+        self.assertEqual(response.data["statut"], "En attente")
+
+    def test_list_salary_advances(self):
+        SalaryAdvance.objects.create(
+            employee=self.employee,
+            amount="300.00",
+            request_date="2026-07-15",
+            reason="Urgence",
+        )
+        self.client.force_authenticate(user=self.hr_user)
+
+        response = self.client.get("/api/hr/salary-advances/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+
+    def test_approve_salary_advance(self):
+        advance = SalaryAdvance.objects.create(
+            employee=self.employee,
+            amount="200.00",
+            request_date="2026-07-10",
+        )
+        self.client.force_authenticate(user=self.hr_user)
+
+        response = self.client.post(f"/api/hr/salary-advances/{advance.id}/approve/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        advance.refresh_from_db()
+        self.assertEqual(advance.statut, SalaryAdvance.Status.APPROUVEE)
+        self.assertEqual(advance.approved_by, self.hr_user)
+
+    def test_reject_salary_advance(self):
+        advance = SalaryAdvance.objects.create(
+            employee=self.employee,
+            amount="150.00",
+            request_date="2026-07-10",
+        )
+        self.client.force_authenticate(user=self.hr_user)
+
+        response = self.client.post(f"/api/hr/salary-advances/{advance.id}/reject/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        advance.refresh_from_db()
+        self.assertEqual(advance.statut, SalaryAdvance.Status.REFUSEE)
+
+    def test_mark_repaid_salary_advance(self):
+        advance = SalaryAdvance.objects.create(
+            employee=self.employee,
+            amount="400.00",
+            request_date="2026-07-01",
+            statut=SalaryAdvance.Status.APPROUVEE,
+        )
+        self.client.force_authenticate(user=self.hr_user)
+
+        response = self.client.post(
+            f"/api/hr/salary-advances/{advance.id}/mark_repaid/",
+            {"repayment_date": "2026-08-01"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        advance.refresh_from_db()
+        self.assertEqual(advance.statut, SalaryAdvance.Status.REMBOURSEE)
+        self.assertEqual(str(advance.amount_repaid), "400.00")
+        self.assertEqual(str(advance.repayment_date), "2026-08-01")

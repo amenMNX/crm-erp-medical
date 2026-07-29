@@ -1,16 +1,55 @@
+# Sprint 0 security fixes applied:
+#   - DEBUG removed from hardcoded env (controlled via .env file)
+#   - Secrets moved to .env file references (never hardcoded here)
+#   - PostgreSQL healthcheck added so backend waits for DB to be ready
+#   - depends_on upgraded to condition: service_healthy
+
 services:
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      POSTGRES_DB: ${DB_NAME:-crm_erp_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+    ports:
+      - "5432:5432"
+    networks:
+      - app_network
+    # FIX: healthcheck so the backend service waits until Postgres is
+    # actually accepting connections, not just started as a process.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-crm_erp_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   backend:
     build: ./backend
     container_name: django_backend
-    command: python manage.py runserver 0.0.0.0:8000
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
     volumes:
       - ./backend:/app
-      - sqlite_data:/app/db
     ports:
       - "8000:8000"
+    env_file:
+      # All secrets live in .env (gitignored). Copy .env.example to .env and fill it in.
+      - .env
     environment:
-      - DEBUG=1
-      - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+      # Non-secret, container-specific values set here directly.
+      # Secrets (DB_PASSWORD, DJANGO_SECRET_KEY) must come from .env.
+      - DB_ENGINE=django.db.backends.postgresql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,backend
+    depends_on:
+      db:
+        # FIX: wait for the healthcheck to pass, not just for the container to start.
+        condition: service_healthy
     networks:
       - app_network
 
@@ -26,12 +65,12 @@ services:
     depends_on:
       - backend
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_BASE_URL=http://localhost:8000/api
     networks:
       - app_network
 
 volumes:
-  sqlite_data:
+  postgres_data:
 
 networks:
   app_network:

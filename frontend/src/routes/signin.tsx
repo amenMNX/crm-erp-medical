@@ -9,16 +9,17 @@ export const Route = createFileRoute("/signin")({
 });
 
 type LoginResponse = {
-  token :string ;
+  access: string;
+  refresh: string;
 };
 
-type  CurrentUserResponse = {
+type MeResponse = {
+  id: number;
   username: string;
   email: string;
-  first_name : string;
-  last_name : string ;
-}
-
+  first_name: string;
+  last_name: string;
+};
 
 function SigninPage() {
   const navigate = useNavigate();
@@ -40,44 +41,64 @@ function SigninPage() {
     const username = String(formData.get("username") ?? "").trim();
     const password = String(formData.get("password") ?? "");
 
+    if (!username) {
+      setError("Username is required.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!password) {
+      setError("Password is required.");
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const { token } = await apiFetch<LoginResponse>("/accounts/login/", {
+      // Step 1: get the auth token
+      const tokenResponse = await apiFetch<LoginResponse>("/accounts/login/", {
         method: "POST",
         body: { username, password },
         token: null,
       });
 
-      const user = await apiFetch<CurrentUserResponse>("/accounts/me/", {
-        token,
+      // Step 2: fetch the current user's profile so we can store their name/email
+      const meResponse = await apiFetch<MeResponse>("/accounts/me/", {
+        token: tokenResponse.access,
       });
 
+      // Step 3: persist both in localStorage via auth helpers
       login(
-        {
-          name: `${user.first_name} ${user.last_name}`.trim() || user.username,
-          email: user.email || user.username,
-        },
-        token,
-      );
+          {
+            name: [meResponse.first_name, meResponse.last_name].filter(Boolean).join(" ") || meResponse.username,
+            email: meResponse.email,
+          },
+          tokenResponse.access,
+          tokenResponse.refresh,
+        );
 
       navigate({ to: "/dashboard", replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to sign in.");
+      if (err instanceof ApiError) {
+        setError(err.message || "Invalid username or password.");
+      } else {
+        setError("Unable to sign in. Please check your connection and try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-background px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-md rounded-3xl border border-border bg-card p-10 shadow-sm">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4 py-8 sm:px-6 lg:px-8">
+      <div className="w-full max-w-md rounded-3xl border border-border bg-card p-10 shadow-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-semibold text-foreground">Welcome back</h1>
+          <h1 className="text-3xl font-semibold text-foreground">Sign in</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Sign in to access your dashboard and continue managing your workspace.
+            Welcome back — enter your credentials to continue.
           </p>
         </div>
 
-        <form className="space-y-6" onSubmit={handleSubmit}>
+        <form className="space-y-5" onSubmit={handleSubmit}>
           {error && (
             <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
@@ -89,7 +110,7 @@ function SigninPage() {
             <input
               name="username"
               type="text"
-              placeholder="admin"
+              placeholder="johndoe"
               autoComplete="username"
               required
               className="mt-2 w-full rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
@@ -101,26 +122,41 @@ function SigninPage() {
             <input
               name="password"
               type="password"
-              placeholder="********"
+              placeholder="••••••••"
               autoComplete="current-password"
               required
               className="mt-2 w-full rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </label>
 
+          <div className="text-right">
+            <Link
+              to="/forgot-password"
+              className="text-sm text-primary hover:underline"
+            >
+              Forgot your password?
+            </Link>
+          </div>
+
           <button
             type="submit"
             disabled={isSubmitting}
             className={buttonVariants({ variant: "default", className: "w-full py-3" })}
           >
-            {isSubmitting ? "Signing in..." : "Sign in"}
+            {isSubmitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
 
         <div className="mt-6 text-center text-sm text-muted-foreground">
-          Need an account?{" "}
+          Don't have an account?{" "}
           <Link to="/signup" className="font-medium text-primary underline">
-            Sign up
+            Create one
+          </Link>
+        </div>
+
+        <div className="mt-2 text-center text-sm text-muted-foreground">
+          <Link to="/portal" className="font-medium text-primary underline">
+            Patient portal — no account needed
           </Link>
         </div>
       </div>

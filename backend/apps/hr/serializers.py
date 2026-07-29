@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Absence, Employee, LeaveRequest
+from .models import Absence, Employee, LeaveRequest, SalaryAdvance, Shift
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -15,6 +15,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "employee_number",
             "first_name",
             "last_name",
+            "date_naissance",
             "job_title",
             "department",
             "phone",
@@ -73,3 +74,54 @@ class AbsenceSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["id", "employee_name", "created_at"]
+
+class SalaryAdvanceSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.__str__", read_only=True)
+    approved_by_name = serializers.CharField(source="approved_by.username", read_only=True)
+
+    class Meta:
+        model = SalaryAdvance
+        fields = [
+            "id",
+            "employee",
+            "employee_name",
+            "amount",
+            "request_date",
+            "reason",
+            "statut",
+            "repayment_date",
+            "amount_repaid",
+            "notes",
+            "approved_by",
+            "approved_by_name",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "employee_name",
+            "approved_by",
+            "approved_by_name",
+            "created_at",
+            "updated_at",
+        ]
+        
+class ShiftSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.__str__", read_only=True)
+
+    class Meta:
+        model = Shift
+        fields = [
+            "id",
+            "employee",
+            "employee_name",
+            "title",
+            "start_datetime",
+            "end_datetime",
+            "location",
+            "status",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "employee_name", "created_at", "updated_at"]

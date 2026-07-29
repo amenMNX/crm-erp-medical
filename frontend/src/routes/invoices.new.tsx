@@ -1,13 +1,23 @@
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { createInvoice } from "@/lib/invoices-api";
+import { fetchPatients } from "@/lib/patients-api";
 
 export const Route = createFileRoute("/invoices/new")({
   head: () => ({
@@ -28,16 +38,31 @@ interface Line {
 
 function CreateInvoicePage() {
   const navigate = useNavigate();
-  const [customer, setCustomer] = useState("");
-  const [email, setEmail] = useState("");
-  const [address, setAddress] = useState("");
-  const [invoiceNo, setInvoiceNo] = useState("IN020");
+  const queryClient = useQueryClient();
+
+  const [patientId, setPatientId] = useState("");
+  const [invoiceNo, setInvoiceNo] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([
     { id: 1, name: "Website Design", qty: 1, price: 800 },
     { id: 2, name: "Hosting (1 year)", qty: 1, price: 120 },
   ]);
+
+  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: fetchPatients });
+  const patients = patientsQuery.data ?? [];
+
+  const createMutation = useMutation({
+    mutationFn: createInvoice,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      toast.success("Invoice created", { description: `#${invoiceNo} saved` });
+      navigate({ to: "/invoices" });
+    },
+    onError: () => setFormError("Failed to create invoice. Check the invoice number is unique."),
+  });
 
   const addLine = () =>
     setLines((l) => [...l, { id: Date.now(), name: "", qty: 1, price: 0 }]);
@@ -51,9 +76,26 @@ function CreateInvoicePage() {
   const total = subtotal + tax;
 
   const save = () => {
-    toast.success("Invoice created", { description: `#${invoiceNo} saved as draft` });
-    navigate({ to: "/invoices" });
+    setFormError(null);
+
+    if (!patientId || !invoiceNo.trim() || !date) {
+      setFormError("Patient, invoice number, and issue date are required.");
+      return;
+    }
+
+    createMutation.mutate({
+      patient: Number(patientId),
+      invoice_number: invoiceNo.trim(),
+      issue_date: date,
+      due_date: dueDate || null,
+      subtotal: subtotal.toFixed(2),
+      tax_amount: tax.toFixed(2),
+      total_amount: total.toFixed(2),
+      notes,
+    });
   };
+
+  const selectedPatient = patients.find((p) => String(p.id) === patientId);
 
   return (
     <AppShell
@@ -63,7 +105,9 @@ function CreateInvoicePage() {
           <Button variant="outline" onClick={() => navigate({ to: "/invoices" })}>
             Cancel
           </Button>
-          <Button onClick={save}>Save Invoice</Button>
+          <Button onClick={save} disabled={createMutation.isPending}>
+            {createMutation.isPending ? "Saving..." : "Save Invoice"}
+          </Button>
         </>
       }
     >
@@ -72,32 +116,52 @@ function CreateInvoicePage() {
         <Card>
           <CardHeader><CardTitle>Details</CardTitle></CardHeader>
           <CardContent className="space-y-4">
+            {formError && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {formError}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="inv">Invoice No.</Label>
-                <Input id="inv" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+                <Input
+                  id="inv"
+                  value={invoiceNo}
+                  onChange={(e) => setInvoiceNo(e.target.value)}
+                  placeholder="e.g. IN020"
+                />
               </div>
               <div>
-                <Label htmlFor="date">Date</Label>
+                <Label htmlFor="date">Issue Date</Label>
                 <Input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </div>
             </div>
+
             <div>
-              <Label htmlFor="cust">Customer Name</Label>
-              <Input id="cust" value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Full name" />
+              <Label htmlFor="due">Due Date (optional)</Label>
+              <Input id="due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
             </div>
+
             <div>
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" />
-            </div>
-            <div>
-              <Label htmlFor="addr">Billing Address</Label>
-              <Textarea id="addr" value={address} onChange={(e) => setAddress(e.target.value)} rows={2} />
+              <Label htmlFor="patient">Patient</Label>
+              <Select value={patientId} onValueChange={setPatientId}>
+                <SelectTrigger id="patient">
+                  <SelectValue placeholder="Select patient" />
+                </SelectTrigger>
+                <SelectContent>
+                  {patients.map((patient) => (
+                    <SelectItem key={patient.id} value={String(patient.id)}>
+                      {patient.first_name} {patient.last_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="pt-2">
               <div className="flex items-center justify-between mb-2">
-                <Label>Products</Label>
+                <Label>Line items (for calculating the total)</Label>
                 <Button variant="ghost" size="sm" onClick={addLine}>
                   <Plus className="h-4 w-4" /> Add Row
                 </Button>
@@ -114,6 +178,9 @@ function CreateInvoicePage() {
                   </div>
                 ))}
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Line items aren't stored individually — only the computed subtotal, tax, and total are saved to the invoice.
+              </p>
             </div>
 
             <div>
@@ -140,16 +207,20 @@ function CreateInvoicePage() {
                 </div>
                 <div className="text-right">
                   <p className="text-xl font-semibold">Invoice</p>
-                  <p className="text-xs text-muted-foreground mt-1">#{invoiceNo}</p>
+                  <p className="text-xs text-muted-foreground mt-1">#{invoiceNo || "—"}</p>
                   <p className="text-xs text-muted-foreground">{date}</p>
                 </div>
               </div>
 
               <div>
                 <p className="text-xs uppercase text-muted-foreground mb-1">Billed to</p>
-                <p className="text-sm font-medium">{customer || "—"}</p>
-                <p className="text-xs text-muted-foreground">{email || "—"}</p>
-                <p className="text-xs text-muted-foreground whitespace-pre-line">{address || "—"}</p>
+                <p className="text-sm font-medium">
+                  {selectedPatient ? `${selectedPatient.first_name} ${selectedPatient.last_name}` : "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">{selectedPatient?.email || "—"}</p>
+                <p className="text-xs text-muted-foreground whitespace-pre-line">
+                  {selectedPatient?.address || "—"}
+                </p>
               </div>
 
               <div className="border-t pt-4">

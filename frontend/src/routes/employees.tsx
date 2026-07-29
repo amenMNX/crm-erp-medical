@@ -173,6 +173,7 @@ function EmployeesPage() {
     const employeeNumber = String(formData.get("employee_number") ?? "").trim();
     const firstName = String(formData.get("first_name") ?? "").trim();
     const lastName = String(formData.get("last_name") ?? "").trim();
+    const dateNaissance = String(formData.get("date_naissance") ?? "").trim();
     const email = String(formData.get("email") ?? "").trim();
     const phone = String(formData.get("phone") ?? "").trim();
     const jobTitle = String(formData.get("job_title") ?? "").trim();
@@ -188,6 +189,7 @@ function EmployeesPage() {
       employee_number: employeeNumber,
       first_name: firstName,
       last_name: lastName,
+      date_naissance: dateNaissance || null,
       email,
       phone,
       job_title: jobTitle,
@@ -276,6 +278,15 @@ function EmployeesPage() {
                     placeholder="Clark"
                     defaultValue={editingEmployee?.last_name ?? ""}
                     required
+                    className="mt-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-foreground">Date of birth</span>
+                  <Input
+                    name="date_naissance"
+                    type="date"
+                    defaultValue={editingEmployee?.date_naissance ?? ""}
                     className="mt-2"
                   />
                 </label>

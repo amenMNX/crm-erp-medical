@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Trash2, Edit, Loader2 } from "lucide-react";
+import { Plus, Search, Trash2, Edit, Loader2, MessageSquare, Wrench, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -39,7 +45,11 @@ import {
   fetchPatients,
   fetchTickets,
   updateTicket,
+  fetchTicketComments,
+  createTicketComment,
+  deleteTicketComment,
   type ApiTicket,
+  type ApiTicketComment,
 } from "@/lib/tickets-api";
 import { ApiError } from "@/lib/api";
 
@@ -76,6 +86,10 @@ function TicketsPage() {
   const [createAgentSearch, setCreateAgentSearch] = useState("");
   const [editAgentSearch, setEditAgentSearch] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  // Comment/intervention panel
+  const [commentTicket, setCommentTicket] = useState<ApiTicket | null>(null);
+  const [commentBody, setCommentBody] = useState("");
+  const [commentIsIntervention, setCommentIsIntervention] = useState(false);
 
   const tickets = ticketsQuery.data ?? [];
   const patients = patientsQuery.data ?? [];
@@ -115,6 +129,29 @@ function TicketsPage() {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
       setDeleteDialogOpen(false);
       setTicketToDelete(null);
+    },
+  });
+
+  // Comment mutations
+  const addCommentMutation = useMutation({
+    mutationFn: ({ ticketId, body, is_intervention }: { ticketId: number; body: string; is_intervention: boolean }) =>
+      createTicketComment(ticketId, { body, is_intervention }),
+    onSuccess: () => {
+      if (commentTicket) {
+        queryClient.invalidateQueries({ queryKey: ["ticket-comments", commentTicket.id] });
+      }
+      setCommentBody("");
+      setCommentIsIntervention(false);
+    },
+  });
+
+  const deleteCommentMutation = useMutation({
+    mutationFn: ({ ticketId, commentId }: { ticketId: number; commentId: number }) =>
+      deleteTicketComment(ticketId, commentId),
+    onSuccess: () => {
+      if (commentTicket) {
+        queryClient.invalidateQueries({ queryKey: ["ticket-comments", commentTicket.id] });
+      }
     },
   });
 
@@ -364,6 +401,7 @@ function TicketsPage() {
                     <TableHead>Priority</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Date</TableHead>
+                    <TableHead />
                   </TableRow>
                 </TableHeader>
 
@@ -397,6 +435,9 @@ function TicketsPage() {
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => openDeleteDialog(ticket.id)}>
                           <Trash2 className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" title="Comments &amp; interventions" onClick={() => { setCommentTicket(ticket); setCommentBody(""); setCommentIsIntervention(false); }}>
+                          <MessageSquare className="h-4 w-4" />
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -529,16 +570,168 @@ function TicketsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Comment / Intervention Sheet ─────────────────────────────── */}
+      <CommentSheet
+        ticket={commentTicket}
+        onClose={() => setCommentTicket(null)}
+        commentBody={commentBody}
+        setCommentBody={setCommentBody}
+        commentIsIntervention={commentIsIntervention}
+        setCommentIsIntervention={setCommentIsIntervention}
+        onSubmit={() => {
+          if (!commentTicket || !commentBody.trim()) return;
+          addCommentMutation.mutate({
+            ticketId: commentTicket.id,
+            body: commentBody.trim(),
+            is_intervention: commentIsIntervention,
+          });
+        }}
+        onDeleteComment={(commentId) => {
+          if (!commentTicket) return;
+          deleteCommentMutation.mutate({ ticketId: commentTicket.id, commentId });
+        }}
+        isSubmitting={addCommentMutation.isPending}
+      />
     </AppShell>
   );
 }
 
 function apiErrorMessage(err: ApiError): string {
-  if (typeof err.body === "object" && err.body !== null) {
-    const record = err.body as Record<string, unknown>;
+  if (typeof err.data === "object" && err.data !== null) {
+    const record = err.data as Record<string, unknown>;
     const firstKey = Object.keys(record)[0];
     const val = firstKey ? record[firstKey] : undefined;
     if (Array.isArray(val) && typeof val[0] === "string") return val[0];
   }
   return err.message;
+}
+// ─── Comment / Intervention Sheet ───────────────────────────────────────────
+
+type CommentSheetProps = {
+  ticket: ApiTicket | null;
+  onClose: () => void;
+  commentBody: string;
+  setCommentBody: (v: string) => void;
+  commentIsIntervention: boolean;
+  setCommentIsIntervention: (v: boolean) => void;
+  onSubmit: () => void;
+  onDeleteComment: (commentId: number) => void;
+  isSubmitting: boolean;
+};
+
+function CommentSheet({
+  ticket,
+  onClose,
+  commentBody,
+  setCommentBody,
+  commentIsIntervention,
+  setCommentIsIntervention,
+  onSubmit,
+  onDeleteComment,
+  isSubmitting,
+}: CommentSheetProps) {
+  const commentsQuery = useQuery({
+    queryKey: ["ticket-comments", ticket?.id],
+    queryFn: () => fetchTicketComments(ticket!.id),
+    enabled: !!ticket,
+  });
+
+  const comments = commentsQuery.data ?? [];
+
+  return (
+    <Sheet open={!!ticket} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <SheetContent className="flex flex-col w-full sm:max-w-lg gap-0 p-0">
+        <SheetHeader className="px-6 py-4 border-b">
+          <SheetTitle className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4" />
+            {ticket?.numero} — Comments &amp; Interventions
+          </SheetTitle>
+        </SheetHeader>
+
+        {/* Thread */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+          {commentsQuery.isLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            </div>
+          )}
+          {!commentsQuery.isLoading && comments.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No comments yet. Add the first one below.
+            </p>
+          )}
+          {comments.map((comment: ApiTicketComment) => (
+            <div
+              key={comment.id}
+              className={`rounded-lg border p-3 text-sm ${
+                comment.is_intervention
+                  ? "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30"
+                  : "border-border bg-muted/40"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  {comment.is_intervention && (
+                    <Wrench className="h-3 w-3 text-amber-600" />
+                  )}
+                  {comment.author_name}
+                  {comment.is_intervention && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 ml-1">
+                      Intervention
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{new Date(comment.created_at).toLocaleString()}</span>
+                  <button
+                    onClick={() => onDeleteComment(comment.id)}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    title="Delete"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <p className="text-muted-foreground whitespace-pre-wrap">{comment.body}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Compose */}
+        <div className="border-t px-6 py-4 space-y-3">
+          <Textarea
+            value={commentBody}
+            onChange={(e) => setCommentBody(e.target.value)}
+            placeholder="Write a comment or describe the intervention…"
+            className="resize-none"
+            rows={3}
+          />
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={commentIsIntervention}
+                onChange={(e) => setCommentIsIntervention(e.target.checked)}
+                className="rounded"
+              />
+              <Wrench className="h-3.5 w-3.5 text-amber-600" />
+              Mark as intervention
+            </label>
+            <Button
+              size="sm"
+              onClick={onSubmit}
+              disabled={isSubmitting || !commentBody.trim()}
+            >
+              {isSubmitting ? (
+                <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> Posting…</>
+              ) : (
+                "Post"
+              )}
+            </Button>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
 }

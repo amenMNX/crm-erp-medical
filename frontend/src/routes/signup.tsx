@@ -42,31 +42,27 @@ function SignupPage() {
     const password = String(formData.get("password") ?? "");
     const confirmPassword = String(formData.get("confirm_password") ?? "");
 
-    // Validation
+    // Client-side validation
     if (!firstName || !lastName) {
       setError("First name and last name are required.");
       setIsSubmitting(false);
       return;
     }
-
     if (!username) {
       setError("Username is required.");
       setIsSubmitting(false);
       return;
     }
-
     if (!email || !email.includes("@")) {
       setError("Please enter a valid email address.");
       setIsSubmitting(false);
       return;
     }
-
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
       setIsSubmitting(false);
       return;
     }
-
     if (password.length < 8) {
       setError("Password must be at least 8 characters long.");
       setIsSubmitting(false);
@@ -74,60 +70,37 @@ function SignupPage() {
     }
 
     try {
-      // Try multiple common registration endpoints
-      let response;
-      const endpoints = [
-        "/auth/register/",
-        "/accounts/register/",
-        "/api/auth/register/",
-        "/users/register/",
-      ];
-
-      let lastError: Error | null = null;
-
-      for (const endpoint of endpoints) {
-        try {
-          response = await apiFetch<SignupResponse>(endpoint, {
-            method: "POST",
-            body: {
-              first_name: firstName,
-              last_name: lastName,
-              username,
-              email,
-              password,
-            },
-            token: null,
-          });
-          break; // Success, exit loop
-        } catch (err) {
-          lastError = err instanceof Error ? err : new Error(String(err));
-          continue; // Try next endpoint
-        }
-      }
-
-      if (!response) {
-        throw lastError || new Error("Registration failed");
-      }
+      // ✅ FIXED: Direct call to the known working endpoint. No loop.
+      await apiFetch<SignupResponse>("/accounts/register/", {
+        method: "POST",
+        body: {
+          first_name: firstName,
+          last_name: lastName,
+          username,
+          email,
+          password,
+        },
+        token: null,
+      });
 
       setSuccessMessage(
         "Account created successfully! Please sign in with your credentials."
       );
-      
-      // Clear form after successful registration
       event.currentTarget.reset();
-      
-      // Optionally redirect to signin after 2 seconds
+
       setTimeout(() => {
         navigate({ to: "/signin", replace: true });
       }, 2000);
-      
+
     } catch (err) {
       console.error("Registration error:", err);
-      
+      setSuccessMessage(null); // Ensure mutual exclusivity
+
       if (err instanceof ApiError) {
-        // Show detailed error from API
-        const errorMessage = err.message || err.details || "Unable to create account.";
-        setError(errorMessage);
+        setError(err.message || "Unable to create account.");
+      } else if (err instanceof SyntaxError) {
+        // Catches JSON.parse failures from HTML debug pages
+        setError("Server returned an invalid response. Please try again later.");
       } else {
         setError("Unable to create account. Please check your connection and try again.");
       }
@@ -152,7 +125,6 @@ function SignupPage() {
               {error}
             </div>
           )}
-
           {successMessage && (
             <div className="rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-600">
               {successMessage}
@@ -171,7 +143,6 @@ function SignupPage() {
                 className="mt-2 w-full rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
             </label>
-
             <label className="block">
               <span className="text-sm font-medium text-foreground">Last name</span>
               <input
