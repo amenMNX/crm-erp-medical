@@ -102,9 +102,7 @@ class CurrentUserView(APIView):
         return Response(serializer.data)
 
 class LoginView(APIView):
-    # Issues JWT access + refresh tokens.
-    # Keeps audit logging for login success/failure (journalisation requirement).
-    # LoginRateThrottle limits to 10 attempts/minute per IP to block brute-force.
+    # Issues JWT access + refresh tokens and writes them as HttpOnly cookies.
     permission_classes = [permissions.AllowAny]
     throttle_classes = [LoginRateThrottle]
 
@@ -120,7 +118,6 @@ class LoginView(APIView):
             )
             raise ValidationError({"detail": "Username and password are required."})
 
-        # Authenticate manually so we can log both success and failure.
         from django.contrib.auth import authenticate
         user = authenticate(request, username=username, password=password)
 
@@ -140,8 +137,9 @@ class LoginView(APIView):
             )
             raise ValidationError({"detail": "This account is inactive."})
 
-        # Issue JWT pair
         refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
 
         log_event(
             AuditLogEntry.Action.LOGIN,
@@ -150,31 +148,104 @@ class LoginView(APIView):
             changes={"ip": request.META.get("REMOTE_ADDR")},
         )
 
-        return Response({
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-        })
+        response = Response(
+            {
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "is_staff": user.is_staff,
+                }
+            },
+            status=status.HTTP_200_OK,
+        )
+
+        response.set_cookie(
+            key=settings.JWT_AUTH_COOKIE,
+            value=access_token,
+            httponly=settings.JWT_AUTH_HTTPONLY,
+            secure=settings.JWT_AUTH_SECURE,
+            samesite=settings.JWT_AUTH_SAMESITE,
+            max_age=settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds(),
+            path=settings.JWT_AUTH_PATH,
+        )
+        response.set_cookie(
+            key=settings.JWT_AUTH_REFRESH_COOKIE,
+            value=refresh_token,
+            httponly=settings.JWT_AUTH_HTTPONLY,
+            secure=settings.JWT_AUTH_SECURE,
+            samesite=settings.JWT_AUTH_SAMESITE,
+            max_age=settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds(),
+            path=settings.JWT_AUTH_PATH,
+        )
+
+        return response
 
 
 class LogoutView(APIView):
-    # ✅ FIX: Blacklists the refresh token so it can't be reused after logout.
-    # The access token remains valid until it expires (60 min) — that's
-    # standard JWT behaviour and acceptable for this use-case.
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        log_event(AuditLogEntry.Action.LOGOUT, actor=request.user, object_repr=request.user.username)
+        refresh_token = request.COOKIES.get(settings.JWT_AUTH_REFRESH_COOKIE)
 
-        refresh_token = request.data.get("refresh")
         if refresh_token:
             try:
                 token = RefreshToken(refresh_token)
                 token.blacklist()
             except TokenError:
-                # Already blacklisted or invalid — not an error worth surfacing.
                 pass
 
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        response = Response({"detail": "Logged out successfully."}, status=status.HTTP_200_OK)
+        response.delete_cookie(settings.JWT_AUTH_COOKIE, path=settings.JWT_AUTH_PATH)
+        response.delete_cookie(settings.JWT_AUTH_REFRESH_COOKIE, path=settings.JWT_AUTH_PATH)
+
+        return response
+
+
+class TokenRefreshView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        refresh_token = request.COOKIES.get(settings.JWT_AUTH_REFRESH_COOKIE)
+
+        if refresh_token is None:
+            return Response(
+                {"detail": "Refresh token not found."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            refresh = RefreshToken(refresh_token)
+            access_token = str(refresh.access_token)
+            new_refresh_token = str(refresh)
+
+            response = Response({"access_token": access_token}, status=status.HTTP_200_OK)
+            response.set_cookie(
+                key=settings.JWT_AUTH_COOKIE,
+                value=access_token,
+                httponly=settings.JWT_AUTH_HTTPONLY,
+                secure=settings.JWT_AUTH_SECURE,
+                samesite=settings.JWT_AUTH_SAMESITE,
+                max_age=settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds(),
+                path=settings.JWT_AUTH_PATH,
+            )
+            response.set_cookie(
+                key=settings.JWT_AUTH_REFRESH_COOKIE,
+                value=new_refresh_token,
+                httponly=settings.JWT_AUTH_HTTPONLY,
+                secure=settings.JWT_AUTH_SECURE,
+                samesite=settings.JWT_AUTH_SAMESITE,
+                max_age=settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds(),
+                path=settings.JWT_AUTH_PATH,
+            )
+            return response
+        except TokenError:
+            return Response(
+                {"detail": "Invalid refresh token."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
     
 class ChangePasswordView(APIView):

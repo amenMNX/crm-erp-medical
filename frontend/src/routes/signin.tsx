@@ -1,17 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, loginRequest } from "@/lib/api";
 import { isAuthenticated, login } from "@/lib/auth";
 
 export const Route = createFileRoute("/signin")({
   component: SigninPage,
 });
-
-type LoginResponse = {
-  access: string;
-  refresh: string;
-};
 
 type MeResponse = {
   id: number;
@@ -19,6 +14,7 @@ type MeResponse = {
   email: string;
   first_name: string;
   last_name: string;
+  profile?: { role?: string };
 };
 
 function SigninPage() {
@@ -54,27 +50,16 @@ function SigninPage() {
     }
 
     try {
-      // Step 1: get the auth token
-      const tokenResponse = await apiFetch<LoginResponse>("/accounts/login/", {
-        method: "POST",
-        body: { username, password },
-        token: null,
-      });
+      const response = await loginRequest(username, password);
 
-      // Step 2: fetch the current user's profile so we can store their name/email
-      const meResponse = await apiFetch<MeResponse>("/accounts/me/", {
-        token: tokenResponse.access,
+      login({
+        id: response.user.id,
+        username: response.user.username,
+        name:
+          [response.user.first_name, response.user.last_name].filter(Boolean).join(" ") || response.user.username,
+        email: response.user.email,
+        role: response.user.profile?.role,
       });
-
-      // Step 3: persist both in localStorage via auth helpers
-      login(
-          {
-            name: [meResponse.first_name, meResponse.last_name].filter(Boolean).join(" ") || meResponse.username,
-            email: meResponse.email,
-          },
-          tokenResponse.access,
-          tokenResponse.refresh,
-        );
 
       navigate({ to: "/dashboard", replace: true });
     } catch (err) {

@@ -9,24 +9,28 @@ from datetime import timedelta
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# SECURITY WARNING: don't run with debug turned on in production!
+# Default is False. Developers must explicitly set DJANGO_DEBUG=True in their
+# local .env file. This prevents stack traces from leaking in a Docker
+# production image that ships without a .env file.
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
+
 # SECURITY WARNING: keep the secret key used in production secret!
+# DEBUG must be defined first — the guard below references it.
+# In development (DEBUG=True) the insecure fallback is allowed so the project
+# works out-of-the-box without a .env file.
 # In production (DEBUG=False) we refuse to start with a missing or insecure key.
-# In development, a fallback is allowed so `docker-compose up` still works out-of-the-box
-# without a .env file — the key is clearly marked as dev-only.
 _SECRET_KEY_DEFAULT = "django-insecure-dev-only-key-change-in-production"
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", _SECRET_KEY_DEFAULT)
 
 if not DEBUG and SECRET_KEY == _SECRET_KEY_DEFAULT:
     raise RuntimeError(
         "DJANGO_SECRET_KEY env var is not set (or still uses the insecure dev default). "
-        "Generate one with: python -c \"from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())\""
+        "Generate one with:\n"
+        "  python -c \"from django.core.management.utils import get_random_secret_key; "
+        "print(get_random_secret_key())\"\n"
+        "Then set DJANGO_SECRET_KEY=<generated_value> in your .env file."
     )
-
-# SECURITY WARNING: don't run with debug turned on in production!
-# Default is False. Developers must explicitly set DJANGO_DEBUG=True in their
-# .env file. This prevents stack traces from leaking in a Docker production image
-# that ships without a .env file.
-DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -145,6 +149,8 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
+CORS_ALLOW_CREDENTIALS = True
+
 # Email
 EMAIL_BACKEND = os.getenv(
     "DJANGO_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
@@ -164,7 +170,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 10,
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.accounts.authentication.CookieJWTAuthentication",
     ],
     # FIX #3: IsAuthenticated (not IsAuthenticatedOrReadOnly) as the global default.
     # With IsAuthenticatedOrReadOnly, any anonymous caller can GET /api/crm/patients/,
@@ -190,11 +196,36 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
     'ALGORITHM': 'HS256',
     'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'JWK_URL': None,
+    'LEEWAY': 0,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
+    'JTI_CLAIM': 'jti',
+    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
+
+JWT_AUTH_COOKIE = 'access_token'
+JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
+JWT_AUTH_SAMESITE = 'Lax'
+JWT_AUTH_SECURE = False
+JWT_AUTH_HTTPONLY = True
+JWT_AUTH_PATH = '/'
+JWT_AUTH_DOMAIN = None

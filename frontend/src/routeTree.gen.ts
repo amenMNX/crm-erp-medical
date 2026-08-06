@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TreatmentsRouteImport } from './routes/treatments'
 import { Route as TicketsRouteImport } from './routes/tickets'
 import { Route as TeamScheduleRouteImport } from './routes/team-schedule'
 import { Route as SignupRouteImport } from './routes/signup'
@@ -20,6 +21,7 @@ import { Route as Roles_permissionRouteImport } from './routes/roles_permission'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as PortalRouteImport } from './routes/portal'
+import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as MessagesRouteImport } from './routes/messages'
@@ -40,9 +42,15 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as PatientsIndexRouteImport } from './routes/patients.index'
 import { Route as InvoicesIndexRouteImport } from './routes/invoices.index'
 import { Route as PatientsNewRouteImport } from './routes/patients.new'
+import { Route as PatientsPatientIdRouteImport } from './routes/patients.$patientId'
 import { Route as InvoicesNewRouteImport } from './routes/invoices.new'
 import { Route as InvoicesInvoiceIdRouteImport } from './routes/invoices.$invoiceId'
 
+const TreatmentsRoute = TreatmentsRouteImport.update({
+  id: '/treatments',
+  path: '/treatments',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TicketsRoute = TicketsRouteImport.update({
   id: '/tickets',
   path: '/tickets',
@@ -96,6 +104,11 @@ const ReportsRoute = ReportsRouteImport.update({
 const PortalRoute = PortalRouteImport.update({
   id: '/portal',
   path: '/portal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PayrollRoute = PayrollRouteImport.update({
+  id: '/payroll',
+  path: '/payroll',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PaymentsRoute = PaymentsRouteImport.update({
@@ -198,6 +211,11 @@ const PatientsNewRoute = PatientsNewRouteImport.update({
   path: '/patients/new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PatientsPatientIdRoute = PatientsPatientIdRouteImport.update({
+  id: '/patients/$patientId',
+  path: '/patients/$patientId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InvoicesNewRoute = InvoicesNewRouteImport.update({
   id: '/invoices/new',
   path: '/invoices/new',
@@ -227,6 +245,7 @@ export interface FileRoutesByFullPath {
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/payments': typeof PaymentsRoute
+  '/payroll': typeof PayrollRoute
   '/portal': typeof PortalRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -238,8 +257,10 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
+  '/treatments': typeof TreatmentsRoute
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
+  '/patients/$patientId': typeof PatientsPatientIdRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices/': typeof InvoicesIndexRoute
   '/patients/': typeof PatientsIndexRoute
@@ -262,6 +283,7 @@ export interface FileRoutesByTo {
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/payments': typeof PaymentsRoute
+  '/payroll': typeof PayrollRoute
   '/portal': typeof PortalRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -273,8 +295,10 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
+  '/treatments': typeof TreatmentsRoute
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
+  '/patients/$patientId': typeof PatientsPatientIdRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices': typeof InvoicesIndexRoute
   '/patients': typeof PatientsIndexRoute
@@ -298,6 +322,7 @@ export interface FileRoutesById {
   '/messages': typeof MessagesRoute
   '/notifications': typeof NotificationsRoute
   '/payments': typeof PaymentsRoute
+  '/payroll': typeof PayrollRoute
   '/portal': typeof PortalRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -309,8 +334,10 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
+  '/treatments': typeof TreatmentsRoute
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
+  '/patients/$patientId': typeof PatientsPatientIdRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices/': typeof InvoicesIndexRoute
   '/patients/': typeof PatientsIndexRoute
@@ -335,6 +362,7 @@ export interface FileRouteTypes {
     | '/messages'
     | '/notifications'
     | '/payments'
+    | '/payroll'
     | '/portal'
     | '/reports'
     | '/reset-password'
@@ -346,8 +374,10 @@ export interface FileRouteTypes {
     | '/signup'
     | '/team-schedule'
     | '/tickets'
+    | '/treatments'
     | '/invoices/$invoiceId'
     | '/invoices/new'
+    | '/patients/$patientId'
     | '/patients/new'
     | '/invoices/'
     | '/patients/'
@@ -370,6 +400,7 @@ export interface FileRouteTypes {
     | '/messages'
     | '/notifications'
     | '/payments'
+    | '/payroll'
     | '/portal'
     | '/reports'
     | '/reset-password'
@@ -381,8 +412,10 @@ export interface FileRouteTypes {
     | '/signup'
     | '/team-schedule'
     | '/tickets'
+    | '/treatments'
     | '/invoices/$invoiceId'
     | '/invoices/new'
+    | '/patients/$patientId'
     | '/patients/new'
     | '/invoices'
     | '/patients'
@@ -405,6 +438,7 @@ export interface FileRouteTypes {
     | '/messages'
     | '/notifications'
     | '/payments'
+    | '/payroll'
     | '/portal'
     | '/reports'
     | '/reset-password'
@@ -416,8 +450,10 @@ export interface FileRouteTypes {
     | '/signup'
     | '/team-schedule'
     | '/tickets'
+    | '/treatments'
     | '/invoices/$invoiceId'
     | '/invoices/new'
+    | '/patients/$patientId'
     | '/patients/new'
     | '/invoices/'
     | '/patients/'
@@ -441,6 +477,7 @@ export interface RootRouteChildren {
   MessagesRoute: typeof MessagesRoute
   NotificationsRoute: typeof NotificationsRoute
   PaymentsRoute: typeof PaymentsRoute
+  PayrollRoute: typeof PayrollRoute
   PortalRoute: typeof PortalRoute
   ReportsRoute: typeof ReportsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
@@ -452,8 +489,10 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TeamScheduleRoute: typeof TeamScheduleRoute
   TicketsRoute: typeof TicketsRoute
+  TreatmentsRoute: typeof TreatmentsRoute
   InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
   InvoicesNewRoute: typeof InvoicesNewRoute
+  PatientsPatientIdRoute: typeof PatientsPatientIdRoute
   PatientsNewRoute: typeof PatientsNewRoute
   InvoicesIndexRoute: typeof InvoicesIndexRoute
   PatientsIndexRoute: typeof PatientsIndexRoute
@@ -461,6 +500,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/treatments': {
+      id: '/treatments'
+      path: '/treatments'
+      fullPath: '/treatments'
+      preLoaderRoute: typeof TreatmentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tickets': {
       id: '/tickets'
       path: '/tickets'
@@ -536,6 +582,13 @@ declare module '@tanstack/react-router' {
       path: '/portal'
       fullPath: '/portal'
       preLoaderRoute: typeof PortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payroll': {
+      id: '/payroll'
+      path: '/payroll'
+      fullPath: '/payroll'
+      preLoaderRoute: typeof PayrollRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/payments': {
@@ -678,6 +731,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PatientsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/patients/$patientId': {
+      id: '/patients/$patientId'
+      path: '/patients/$patientId'
+      fullPath: '/patients/$patientId'
+      preLoaderRoute: typeof PatientsPatientIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/invoices/new': {
       id: '/invoices/new'
       path: '/invoices/new'
@@ -713,6 +773,7 @@ const rootRouteChildren: RootRouteChildren = {
   MessagesRoute: MessagesRoute,
   NotificationsRoute: NotificationsRoute,
   PaymentsRoute: PaymentsRoute,
+  PayrollRoute: PayrollRoute,
   PortalRoute: PortalRoute,
   ReportsRoute: ReportsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
@@ -724,8 +785,10 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TeamScheduleRoute: TeamScheduleRoute,
   TicketsRoute: TicketsRoute,
+  TreatmentsRoute: TreatmentsRoute,
   InvoicesInvoiceIdRoute: InvoicesInvoiceIdRoute,
   InvoicesNewRoute: InvoicesNewRoute,
+  PatientsPatientIdRoute: PatientsPatientIdRoute,
   PatientsNewRoute: PatientsNewRoute,
   InvoicesIndexRoute: InvoicesIndexRoute,
   PatientsIndexRoute: PatientsIndexRoute,

@@ -1,14 +1,15 @@
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, viewsets
+from rest_framework.permissions import IsAuthenticated
 from apps.accounts.permissions import ReadOnlyOrRole
-from .models import CNAMClaim, Invoice, Payment, SubscriptionPlan, SubscriptionChange
-from .serializers import CNAMClaimSerializer, InvoiceSerializer, PaymentSerializer, SubscriptionPlanSerializer, SubscriptionChangeSerializer
+from .models import CNAMClaim, Invoice, Payment, SubscriptionPlan, SubscriptionChange ,OutgoingPayment , InvoiceLineItem
+from .serializers import CNAMClaimSerializer, InvoiceSerializer, PaymentSerializer, SubscriptionPlanSerializer, SubscriptionChangeSerializer ,  OutgoingPaymentSerializer , InvoiceLineItemSerializer
 
 class AccountingPermission(ReadOnlyOrRole):
     allowed_roles = ["admin", "accountant"]
     
 class InvoiceViewSet(viewsets.ModelViewSet):
-    queryset = Invoice.objects.select_related("patient", "treatment_plan").all()
+    queryset = Invoice.objects.select_related("patient", "treatment_plan").prefetch_related("line_items").all()
     serializer_class = InvoiceSerializer
     permission_classes = [AccountingPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -89,3 +90,36 @@ class SubscriptionChangeViewSet(viewsets.ModelViewSet):
             {"detail": "Subscription change records cannot be deleted."},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+class OutgoingPaymentViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only list of outgoing payments (salary advances, supplier payments, etc.)
+    Auto-created by signals — manual creation is via admin only.
+    GET /api/accounting/outgoing-payments/
+    GET /api/accounting/outgoing-payments/{id}/
+    """
+    queryset = OutgoingPayment.objects.all()
+    serializer_class = OutgoingPaymentSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["category", "method"]
+    search_fields = ["reference", "description"]
+    ordering_fields = ["payment_date", "amount", "created_at"]
+    
+class InvoiceLineItemViewSet(viewsets.ModelViewSet):
+    """Manage invoice line items.
+    
+    GET    /api/accounting/invoice-line-items/          - List all line items
+    GET    /api/accounting/invoice-line-items/{id}/    - Get a line item
+    POST   /api/accounting/invoice-line-items/         - Create a line item
+    PATCH  /api/accounting/invoice-line-items/{id}/    - Update a line item
+    DELETE /api/accounting/invoice-line-items/{id}/    - Delete a line item
+    """
+    
+    queryset = InvoiceLineItem.objects.select_related("invoice").all()
+    serializer_class = InvoiceLineItemSerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["invoice"]
+    search_fields = ["description"]
+    ordering_fields = ["created_at", "line_total"]

@@ -39,8 +39,8 @@ import {
 export const Route = createFileRoute("/invoices/")({
   head: () => ({
     meta: [
-      { title: "Invoices — Base" },
-      { name: "description", content: "Manage all your invoices, statuses and payments." },
+      { title: "Facture patient liste — CRM Radiothérapie" },
+      { name: "description", content: "Gérez toutes vos factures, statuts et paiements." },
     ],
   }),
   component: InvoicesPage,
@@ -98,11 +98,11 @@ function InvoicesPage() {
 
   return (
     <AppShell
-      title="Invoice List"
+      title="Facture patient liste"
       actions={
         <Button asChild>
           <Link to="/invoices/new">
-            <Plus className="h-4 w-4" /> Add Invoice
+            <Plus className="h-4 w-4" /> Ajouter une facture
           </Link>
         </Button>
       }

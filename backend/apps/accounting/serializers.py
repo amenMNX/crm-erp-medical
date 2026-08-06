@@ -1,13 +1,29 @@
 from rest_framework import serializers
 
-from .models import CNAMClaim, Invoice, Payment, SubscriptionPlan, SubscriptionChange
+from .models import CNAMClaim, Invoice, InvoiceLineItem, Payment, SubscriptionPlan, SubscriptionChange ,OutgoingPayment
 
-
+class InvoiceLineItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InvoiceLineItem
+        fields = [
+            "id",
+            "description",
+            "quantity",
+            "unit_price",
+            "tax_rate",
+            "line_subtotal",
+            "line_tax",
+            "line_total",
+            "created_at",
+        ]
+        read_only_fields = ["id", "line_subtotal", "line_tax", "line_total", "created_at"]
+        
 class InvoiceSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source="patient.__str__", read_only=True)
     treatment_plan_name = serializers.CharField(source="treatment_plan.name", read_only=True)
     paid_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     balance_due = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    line_items = InvoiceLineItemSerializer(many=True, required=False)
 
     class Meta:
         model = Invoice
@@ -26,6 +42,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "total_amount",
             "paid_amount",
             "balance_due",
+            "line_items",
             "notes",
             "created_at",
             "updated_at",
@@ -34,11 +51,41 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "id",
             "patient_name",
             "treatment_plan_name",
+            "invoice_number",
+            "subtotal",
+            "tax_amount",
+            "total_amount",
             "paid_amount",
             "balance_due",
             "created_at",
             "updated_at",
         ]
+
+    def create(self, validated_data):
+        line_items_data = validated_data.pop("line_items", [])
+        invoice = Invoice.objects.create(**validated_data)
+
+        for item_data in line_items_data:
+            InvoiceLineItem.objects.create(invoice=invoice, **item_data)
+
+        if not line_items_data:
+            invoice.refresh_payment_status()
+
+        return invoice
+
+    def update(self, instance, validated_data):
+        line_items_data = validated_data.pop("line_items", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if line_items_data is not None:
+            instance.line_items.all().delete()
+            for item_data in line_items_data:
+                InvoiceLineItem.objects.create(invoice=instance, **item_data)
+
+        return instance
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -134,3 +181,25 @@ class SubscriptionChangeSerializer(serializers.ModelSerializer):
         if request and hasattr(request, "user"):
             validated_data["recorded_by"] = request.user
         return super().create(validated_data)
+    
+class OutgoingPaymentSerializer(serializers.ModelSerializer):
+    category_display = serializers.CharField(source="get_category_display", read_only=True)
+    method_display   = serializers.CharField(source="get_method_display", read_only=True)
+
+    class Meta:
+        model  = OutgoingPayment
+        fields = [
+            "id",
+            "reference",
+            "category",
+            "category_display",
+            "amount",
+            "payment_date",
+            "method",
+            "method_display",
+            "description",
+            "source_object_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "reference", "category_display", "method_display", "created_at", "updated_at"]

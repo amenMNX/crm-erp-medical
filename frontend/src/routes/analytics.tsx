@@ -39,7 +39,7 @@ function formatMoney(value: string | number) {
 function AnalyticsPage() {
   const summaryQuery = useQuery({ queryKey: ["dashboard-summary"], queryFn: fetchDashboardSummary });
   const invoicesQuery = useQuery({ queryKey: ["invoices"], queryFn: fetchInvoices });
-  const ticketsQuery = useQuery({ queryKey: ["tickets"], queryFn: fetchTickets });
+  const ticketsQuery = useQuery({ queryKey: ["tickets"], queryFn: () => fetchTickets() });
 
   const summary = summaryQuery.data;
   const invoices = invoicesQuery.data ?? [];
@@ -77,6 +77,13 @@ function AnalyticsPage() {
         { label: "Patients", value: String(summary.patients_count), icon: Users },
         { label: "Open Tickets", value: String(openTickets), icon: Ticket },
         { label: "Active Treatment Plans", value: String(summary.active_treatment_plans_count), icon: Activity },
+        { label: "Scheduled Sessions", value: String(summary.scheduled_sessions_count), icon: Activity },
+        { label: "Completed Sessions", value: String(summary.completed_sessions_count), icon: Activity },
+        {
+          label: `Overdue Invoices (>${summary.overdue_threshold_days}d)`,
+          value: String(summary.overdue_invoices_count),
+          icon: DollarSign,
+        },
       ]
     : [];
 

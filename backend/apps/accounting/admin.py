@@ -1,7 +1,11 @@
 from django.contrib import admin
 
-from .models import Invoice, Payment
+from .models import Invoice, InvoiceLineItem, Payment , OutgoingPayment 
 
+class InvoiceLineItemInline(admin.TabularInline):
+    model = InvoiceLineItem
+    extra = 1
+    readonly_fields = ("line_subtotal", "line_tax", "line_total", "created_at")
 
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
@@ -20,6 +24,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         "patient__medical_record_number",
     )
     list_filter = ("status", "issue_date", "due_date")
+    inlines = [InvoiceLineItemInline]
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
@@ -37,3 +42,10 @@ class PaymentAdmin(admin.ModelAdmin):
         "reference",
     )
     list_filter = ("method", "payment_date")
+
+@admin.register(OutgoingPayment)
+class OutgoingPaymentAdmin(admin.ModelAdmin):
+    list_display  = ("reference", "category", "amount", "payment_date", "method", "created_at")
+    list_filter   = ("category", "method", "payment_date")
+    search_fields = ("reference", "description")
+    readonly_fields = ("reference", "created_at", "updated_at")

@@ -9,6 +9,7 @@ from .views import (
     PasswordResetConfirmView,
     PasswordResetRequestView,
     RegisterView,
+    TokenRefreshView,
     UserViewSet,
 )
 
@@ -21,6 +22,7 @@ urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", LoginView.as_view(), name="api-token-login"),
     path("logout/", LogoutView.as_view(), name="api-token-logout"),
+    path("refresh/", TokenRefreshView.as_view(), name="api-token-refresh"),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
     path(

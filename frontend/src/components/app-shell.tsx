@@ -6,7 +6,8 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Input } from "@/components/ui/input";
 import { NotificationDropdown } from "@/components/notification-dropdown";
-import { isAuthenticated } from "@/lib/auth";
+import { fetchCurrentUser } from "@/lib/me-api";
+import { isAuthenticated, login } from "@/lib/auth";
 
 interface AppShellProps {
   title: string;
@@ -19,12 +20,40 @@ export function AppShell({ title, actions, children }: AppShellProps) {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const hasSession = isAuthenticated();
-    setAuthenticated(hasSession);
+    let cancelled = false;
 
-    if (!hasSession) {
-      navigate({ to: "/signin", replace: true });
+    async function ensureAuth() {
+      const hasSession = isAuthenticated();
+      if (hasSession) {
+        setAuthenticated(true);
+        return;
+      }
+
+      try {
+        const user = await fetchCurrentUser();
+        login({
+          id: user.id,
+          username: user.username,
+          name:
+            [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username,
+          email: user.email,
+          role: user.profile?.role,
+        });
+        if (!cancelled) {
+          setAuthenticated(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setAuthenticated(false);
+          navigate({ to: "/signin", replace: true });
+        }
+      }
     }
+
+    ensureAuth();
+    return () => {
+      cancelled = true;
+    };
   }, [navigate]);
 
   if (!authenticated) {

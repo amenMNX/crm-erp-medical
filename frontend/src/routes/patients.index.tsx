@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Search, Mail, Phone, MapPin, Loader2, Trash2 } from "lucide-react";
+import { Plus, Search, Mail, Phone, MapPin, Loader2, Trash2, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { deletePatient, fetchPatients, type ApiPatient } from "@/lib/patients-api";
 import { fetchInvoices } from "@/lib/invoices-api";
@@ -42,10 +42,10 @@ function PatientsPage() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: fetchPatients });
+  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: () => fetchPatients() });
   const invoicesQuery = useQuery({ queryKey: ["invoices"], queryFn: fetchInvoices });
 
-  const patients = patientsQuery.data ?? [];
+  const patients = patientsQuery.data?.results ?? [];
   const invoices = invoicesQuery.data ?? [];
 
   const deleteMutation = useMutation({
@@ -127,7 +127,7 @@ function PatientsPage() {
                     <TableHead>Email</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Record No.</TableHead>
-                    <TableHead className="w-10" />
+                    <TableHead className="w-24" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -150,7 +150,12 @@ function PatientsPage() {
                       <TableCell className="text-muted-foreground">{p.email || "—"}</TableCell>
                       <TableCell className="text-muted-foreground">{p.phone || "—"}</TableCell>
                       <TableCell className="text-muted-foreground">{p.medical_record_number}</TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
+                      <TableCell onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" asChild aria-label={`Dossier ${p.first_name} ${p.last_name}`}>
+                          <Link to="/patients/$patientId" params={{ patientId: String(p.id) }}>
+                            <Eye className="h-4 w-4 text-primary" />
+                          </Link>
+                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"

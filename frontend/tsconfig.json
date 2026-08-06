@@ -12,6 +12,8 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,
     "noEmit": true,
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
 
     /* Linting */
     "skipLibCheck": true,

@@ -38,7 +38,7 @@ import {
   fetchCNAMClaims,
   type CNAMStatus,
 } from "@/lib/cnam-api";
-import { fetchPatients } from "@/lib/patients-api";
+import { fetchAllPatients } from "@/lib/patients-api";
 import { fetchInvoices } from "@/lib/invoices-api";
 
 export const Route = createFileRoute("/cnam")({
@@ -65,7 +65,7 @@ function CNAMPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const claimsQuery = useQuery({ queryKey: ["cnam-claims"], queryFn: fetchCNAMClaims });
-  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: fetchPatients });
+  const patientsQuery = useQuery({ queryKey: ["patients-all"], queryFn: fetchAllPatients });
   const invoicesQuery = useQuery({ queryKey: ["invoices"], queryFn: fetchInvoices });
 
   const claims = claimsQuery.data ?? [];

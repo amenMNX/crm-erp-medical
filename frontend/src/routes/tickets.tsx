@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Trash2, Edit, Loader2, MessageSquare, Wrench, X } from "lucide-react";
+import { Plus, Search, Trash2, Edit, Loader2, MessageSquare, Wrench, X, Clock, AlertTriangle, ShieldCheck, ShieldAlert } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,12 +44,15 @@ import {
   fetchAgents,
   fetchPatients,
   fetchTickets,
+  fetchSlaSummary,
   updateTicket,
   fetchTicketComments,
   createTicketComment,
   deleteTicketComment,
+  formatSlaRemaining,
   type ApiTicket,
   type ApiTicketComment,
+  type SlaStatus,
 } from "@/lib/tickets-api";
 import { ApiError } from "@/lib/api";
 
@@ -68,16 +71,96 @@ function badgeClass(value: TicketPriority | TicketStatus) {
   return "bg-muted text-muted-foreground border-0";
 }
 
+function slaBadgeClass(status: SlaStatus) {
+  if (status === "breached") return "bg-destructive/15 text-destructive border-0";
+  if (status === "warning") return "bg-amber-100 text-amber-700 border-0";
+  if (status === "resolved") return "bg-success/15 text-success border-0";
+  return "bg-muted text-muted-foreground border-0";
+}
+
+function SlaKpiRow() {
+  const slaQuery = useQuery({ queryKey: ["sla-summary"], queryFn: fetchSlaSummary, refetchInterval: 60_000 });
+  const s = slaQuery.data;
+
+  if (slaQuery.isLoading) {
+    return (
+      <div className="grid gap-3 sm:grid-cols-4 mb-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="rounded-lg border bg-muted/30 h-16 animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!s) return null;
+
+  const breachRate = s.breach_rate_30d != null ? `${(s.breach_rate_30d * 100).toFixed(0)}%` : "—";
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-4 mb-4">
+      <Card className="border shadow-none">
+        <CardContent className="flex items-center gap-3 p-4">
+          <div className="rounded-md bg-primary/10 p-2">
+            <ShieldCheck className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Open tickets</p>
+            <p className="text-xl font-semibold">{s.open}</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className={`border shadow-none ${s.breached > 0 ? "border-destructive/40" : ""}`}>
+        <CardContent className="flex items-center gap-3 p-4">
+          <div className={`rounded-md p-2 ${s.breached > 0 ? "bg-destructive/10" : "bg-muted"}`}>
+            <ShieldAlert className={`h-4 w-4 ${s.breached > 0 ? "text-destructive" : "text-muted-foreground"}`} />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">SLA breached</p>
+            <p className={`text-xl font-semibold ${s.breached > 0 ? "text-destructive" : ""}`}>{s.breached}</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className={`border shadow-none ${s.warning > 0 ? "border-amber-300" : ""}`}>
+        <CardContent className="flex items-center gap-3 p-4">
+          <div className={`rounded-md p-2 ${s.warning > 0 ? "bg-amber-100" : "bg-muted"}`}>
+            <AlertTriangle className={`h-4 w-4 ${s.warning > 0 ? "text-amber-600" : "text-muted-foreground"}`} />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">SLA warning</p>
+            <p className={`text-xl font-semibold ${s.warning > 0 ? "text-amber-600" : ""}`}>{s.warning}</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border shadow-none">
+        <CardContent className="flex items-center gap-3 p-4">
+          <div className="rounded-md bg-muted p-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Breach rate (30d)</p>
+            <p className="text-xl font-semibold">{breachRate}</p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function TicketsPage() {
   const queryClient = useQueryClient();
 
-  const ticketsQuery = useQuery({ queryKey: ["tickets"], queryFn: fetchTickets });
-  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: fetchPatients });
+  // Bug fix: was `fetchAllPatients` (undefined) — must be `fetchPatients`
+  const ticketsQuery = useQuery({ queryKey: ["tickets"], queryFn: () => fetchTickets() });
+  const patientsQuery = useQuery({ queryKey: ["patients-all"], queryFn: fetchPatients });
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: fetchAgents });
 
   const [query, setQuery] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [slaFilter, setSlaFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [ticketToDelete, setTicketToDelete] = useState<number | null>(null);
@@ -99,6 +182,7 @@ function TicketsPage() {
     mutationFn: createTicket,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["sla-summary"] });
       setOpen(false);
       setCreateAgentSearch("");
       setFormError(null);
@@ -113,6 +197,7 @@ function TicketsPage() {
       updateTicket(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["sla-summary"] });
       setEditDialogOpen(false);
       setEditingTicket(null);
       setEditAgentSearch("");
@@ -127,6 +212,7 @@ function TicketsPage() {
     mutationFn: deleteTicket,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["sla-summary"] });
       setDeleteDialogOpen(false);
       setTicketToDelete(null);
     },
@@ -169,10 +255,15 @@ function TicketsPage() {
 
       const matchesPriority = priorityFilter === "all" || ticket.priorite === priorityFilter;
       const matchesStatus = statusFilter === "all" || ticket.statut === statusFilter;
+      const matchesSla =
+        slaFilter === "all" ||
+        (slaFilter === "breached" && ticket.sla_breached) ||
+        (slaFilter === "warning" && ticket.sla_status === "warning") ||
+        (slaFilter === "ok" && ticket.sla_status === "ok");
 
-      return matchesQuery && matchesPriority && matchesStatus;
+      return matchesQuery && matchesPriority && matchesStatus && matchesSla;
     });
-  }, [tickets, query, priorityFilter, statusFilter]);
+  }, [tickets, query, priorityFilter, statusFilter, slaFilter]);
 
   function addTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -335,9 +426,12 @@ function TicketsPage() {
         </Dialog>
       }
     >
+      {/* ── SLA KPI banner ─────────────────────────────────────────────── */}
+      <SlaKpiRow />
+
       <Card>
         <CardContent className="space-y-4 p-4">
-          <div className="grid gap-3 md:grid-cols-[1fr_180px_180px]">
+          <div className="grid gap-3 md:grid-cols-[1fr_160px_160px_160px]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -375,6 +469,19 @@ function TicketsPage() {
                 ))}
               </SelectContent>
             </Select>
+
+            {/* SLA filter (new) */}
+            <Select value={slaFilter} onValueChange={setSlaFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="SLA" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All SLA</SelectItem>
+                <SelectItem value="breached">Breached</SelectItem>
+                <SelectItem value="warning">Warning</SelectItem>
+                <SelectItem value="ok">OK</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           {isLoading && (
@@ -400,6 +507,7 @@ function TicketsPage() {
                     <TableHead>Agent</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>SLA</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead />
                   </TableRow>
@@ -407,7 +515,16 @@ function TicketsPage() {
 
                 <TableBody>
                   {filteredTickets.map((ticket) => (
-                    <TableRow key={ticket.id}>
+                    <TableRow
+                      key={ticket.id}
+                      className={
+                        ticket.sla_breached
+                          ? "bg-destructive/5 hover:bg-destructive/10"
+                          : ticket.sla_status === "warning"
+                          ? "bg-amber-50/60 hover:bg-amber-50 dark:bg-amber-950/20"
+                          : ""
+                      }
+                    >
                       <TableCell className="font-medium">{ticket.numero}</TableCell>
                       <TableCell>{ticket.titre}</TableCell>
                       <TableCell>{ticket.client_name}</TableCell>
@@ -426,6 +543,29 @@ function TicketsPage() {
                       <TableCell>
                         <Badge className={badgeClass(ticket.statut)}>{ticket.statut}</Badge>
                       </TableCell>
+                      {/* SLA column (new) */}
+                      <TableCell>
+                        {ticket.sla_status !== "ok" || ticket.sla_breached ? (
+                          <div className="flex flex-col gap-0.5">
+                            <Badge className={slaBadgeClass(ticket.sla_status)}>
+                              {ticket.sla_status === "breached"
+                                ? "Breached"
+                                : ticket.sla_status === "warning"
+                                ? "Warning"
+                                : ticket.sla_status === "resolved"
+                                ? "Resolved"
+                                : "OK"}
+                            </Badge>
+                            {ticket.sla_remaining_minutes !== null && (
+                              <span className="text-[11px] text-muted-foreground">
+                                {formatSlaRemaining(ticket.sla_remaining_minutes)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {ticket.created_at.slice(0, 10)}
                       </TableCell>
@@ -436,12 +576,29 @@ function TicketsPage() {
                         <Button variant="ghost" size="sm" onClick={() => openDeleteDialog(ticket.id)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" title="Comments &amp; interventions" onClick={() => { setCommentTicket(ticket); setCommentBody(""); setCommentIsIntervention(false); }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Comments & interventions"
+                          onClick={() => {
+                            setCommentTicket(ticket);
+                            setCommentBody("");
+                            setCommentIsIntervention(false);
+                          }}
+                        >
                           <MessageSquare className="h-4 w-4" />
                         </Button>
                       </TableCell>
                     </TableRow>
                   ))}
+
+                  {filteredTickets.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                        No tickets match the current filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -606,6 +763,7 @@ function apiErrorMessage(err: ApiError): string {
   }
   return err.message;
 }
+
 // ─── Comment / Intervention Sheet ───────────────────────────────────────────
 
 type CommentSheetProps = {

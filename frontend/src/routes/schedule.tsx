@@ -25,7 +25,7 @@ import {
 import { Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchAppointments, createAppointment } from "@/lib/appointments-api";
-import { fetchPatients } from "@/lib/patients-api";
+import { fetchAllPatients } from "@/lib/patients-api";
 
 export const Route = createFileRoute("/schedule")({
   head: () => ({
@@ -68,7 +68,7 @@ function SchedulePage() {
   const [form, setForm] = useState({ title: "", date: fmtDate(new Date()), time: "09:00", patient: "", reason: "" });
 
   const appointmentsQuery = useQuery({ queryKey: ["appointments"], queryFn: fetchAppointments });
-  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: fetchPatients });
+  const patientsQuery = useQuery({ queryKey: ["patients-all"], queryFn: fetchAllPatients });
   const patients = patientsQuery.data ?? [];
 
   const weekStart = useMemo(() => startOfWeek(new Date()), []);

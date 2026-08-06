@@ -42,13 +42,17 @@ class InvoiceApiTests(TestCase):
         self.invoice_data = {
             "patient": self.patient.id,
             "treatment_plan": self.treatment_plan.id,
-            "invoice_number": "INV-0001",
             "issue_date": "2026-07-20",
             "due_date": "2026-08-20",
             "status": "issued",
-            "subtotal": "1000.00",
-            "tax_amount": "190.00",
-            "total_amount": "1190.00",
+            "line_items": [
+                {
+                    "description": "Radiotherapy session package",
+                    "quantity": "1.00",
+                    "unit_price": "1000.00",
+                    "tax_rate": "19.00",
+                }
+            ],
             "notes": "Initial invoice",
         }
 
@@ -57,7 +61,7 @@ class InvoiceApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Invoice.objects.count(), 1)
-        self.assertEqual(response.data["invoice_number"], "INV-0001")
+        self.assertEqual(response.data["invoice_number"], "IN-0001")
         self.assertEqual(response.data["paid_amount"], "0.00")
         self.assertEqual(response.data["balance_due"], "1190.00")
 
@@ -65,7 +69,7 @@ class InvoiceApiTests(TestCase):
         Invoice.objects.create(
             patient=self.patient,
             treatment_plan=self.treatment_plan,
-            invoice_number="INV-0001",
+            invoice_number="IN-0001",
             issue_date="2026-07-20",
             due_date="2026-08-20",
             status="issued",
@@ -84,7 +88,7 @@ class InvoiceApiTests(TestCase):
         Invoice.objects.create(
             patient=self.patient,
             treatment_plan=self.treatment_plan,
-            invoice_number="INV-0001",
+            invoice_number="IN-0001",
             issue_date="2026-07-20",
             due_date="2026-08-20",
             status="paid",

@@ -1,7 +1,11 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
-from .models import Appointment, Complaint, Patient, Ticket, TreatmentPlan, TreatmentSession, Incident, TicketComment
+from .models import (
+    Appointment, Complaint, Machine, Patient, Room, Ticket,
+    TreatmentPlan, TreatmentSession, Incident, TicketComment
+)
+
 
 class PatientSerializer(serializers.ModelSerializer):
     class Meta:
@@ -21,7 +25,7 @@ class PatientSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "medical_record_number", "created_at", "updated_at"]
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
@@ -42,10 +46,42 @@ class AppointmentSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "patient_name", "created_at", "updated_at"]
-        
-        
+
+
+class MachineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Machine
+        fields = [
+            "id",
+            "name",
+            "model",
+            "status",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class RoomSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Room
+        fields = [
+            "id",
+            "name",
+            "status",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
 class TreatmentPlanSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source="patient.__str__", read_only=True)
+    cumulative_dose = serializers.SerializerMethodField()
+    sessions_completed = serializers.SerializerMethodField()
+    dose_percentage = serializers.SerializerMethodField()
 
     class Meta:
         model = TreatmentPlan
@@ -56,21 +92,54 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
             "name",
             "diagnosis",
             "protocol",
-            "total_sessions",
-            "dose_per_session",
             "total_dose",
+            "dose_per_session",
+            "number_of_sessions",
+            "frequency",
             "start_date",
             "end_date",
             "status",
+            "cumulative_dose",
+            "sessions_completed",
+            "dose_percentage",
             "notes",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "patient_name", "created_at", "updated_at"]
-        
+        read_only_fields = [
+            "id",
+            "patient_name",
+            "cumulative_dose",
+            "sessions_completed",
+            "dose_percentage",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_cumulative_dose(self, obj):
+        from django.db.models import Sum
+        from .models import TreatmentSession
+        result = obj.sessions.filter(
+            status=TreatmentSession.Status.COMPLETED
+        ).aggregate(total=Sum("dose_delivered"))["total"]
+        return float(result) if result else 0.0
+
+    def get_sessions_completed(self, obj):
+        from .models import TreatmentSession
+        return obj.sessions.filter(status=TreatmentSession.Status.COMPLETED).count()
+
+    def get_dose_percentage(self, obj):
+        if not obj.total_dose or float(obj.total_dose) == 0:
+            return 0.0
+        cumulative = self.get_cumulative_dose(obj)
+        return round((cumulative / float(obj.total_dose)) * 100, 1)
+
+
 class TreatmentSessionSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source="patient.__str__", read_only=True)
     treatment_plan_name = serializers.CharField(source="treatment_plan.name", read_only=True)
+    machine_name = serializers.CharField(source="machine.__str__", read_only=True, default=None)
+    room_name = serializers.CharField(source="room.__str__", read_only=True, default=None)
 
     class Meta:
         model = TreatmentSession
@@ -85,7 +154,9 @@ class TreatmentSessionSerializer(serializers.ModelSerializer):
             "actual_datetime",
             "status",
             "machine",
+            "machine_name",
             "room",
+            "room_name",
             "dose_delivered",
             "notes",
             "created_at",
@@ -95,6 +166,8 @@ class TreatmentSessionSerializer(serializers.ModelSerializer):
             "id",
             "patient_name",
             "treatment_plan_name",
+            "machine_name",
+            "room_name",
             "created_at",
             "updated_at",
         ]
@@ -118,6 +191,8 @@ class TicketSerializer(serializers.ModelSerializer):
         many=True, queryset=User.objects.all(), required=False
     )
     agent_details = AgentSerializer(source="agents", many=True, read_only=True)
+    sla_status = serializers.CharField(read_only=True)
+    sla_remaining_minutes = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = Ticket
@@ -132,10 +207,19 @@ class TicketSerializer(serializers.ModelSerializer):
             "client_name",
             "agents",
             "agent_details",
+            "sla_deadline",
+            "sla_breached",
+            "sla_status",
+            "sla_remaining_minutes",
+            "resolved_at",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "numero", "client_name", "agent_details", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "numero", "client_name", "agent_details",
+            "sla_deadline", "sla_breached", "sla_status",
+            "sla_remaining_minutes", "resolved_at", "created_at", "updated_at",
+        ]
 
 
 class ComplaintSerializer(serializers.ModelSerializer):
@@ -156,12 +240,6 @@ class ComplaintSerializer(serializers.ModelSerializer):
 
 
 class PublicTicketSubmitSerializer(serializers.Serializer):
-    """Unauthenticated submission from the external patient portal.
-
-    Identity is verified by matching medical_record_number + last_name
-    against an existing Patient — no account/session is created or required.
-    """
-
     medical_record_number = serializers.CharField()
     last_name = serializers.CharField()
     titre = serializers.CharField(max_length=255)
@@ -190,12 +268,10 @@ class PublicTicketSubmitSerializer(serializers.Serializer):
 
 
 class PublicTicketStatusSerializer(serializers.Serializer):
-    """Lookup key for the external patient portal's status-check endpoint."""
-
     numero = serializers.CharField()
     medical_record_number = serializers.CharField()
-    
-# Add this class
+
+
 class IncidentSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source="patient.__str__", read_only=True)
     reported_by_name = serializers.CharField(source="reported_by.get_full_name", read_only=True)
@@ -223,7 +299,11 @@ class IncidentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "numero", "patient_name", "reported_by_name", "agent_details", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "numero", "patient_name", "reported_by_name",
+            "agent_details", "created_at", "updated_at"
+        ]
+
 
 class PublicComplaintSubmitSerializer(serializers.Serializer):
     medical_record_number = serializers.CharField()
@@ -238,7 +318,7 @@ class PublicComplaintSubmitSerializer(serializers.Serializer):
             )
         except Patient.DoesNotExist:
             raise serializers.ValidationError(
-                "Dossier patient introuvable. Verifiez le numero de dossier et le nom."
+                "Dossier patient introuvable. Vérifiez le numéro de dossier et le nom."
             )
         return attrs
 
@@ -252,6 +332,7 @@ class PublicComplaintSubmitSerializer(serializers.Serializer):
 class PublicComplaintStatusSerializer(serializers.Serializer):
     numero = serializers.CharField()
     medical_record_number = serializers.CharField()
+
 
 class TicketCommentSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()

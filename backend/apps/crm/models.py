@@ -1,8 +1,92 @@
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ValidationError
 
-# Create your models here.
-class Patient (models.Model):
+class Machine(models.Model):
+    """A radiotherapy machine (LINAC, CT-sim, etc.) available for treatment sessions."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        MAINTENANCE = "maintenance", "En maintenance"
+        DECOMMISSIONED = "decommissioned", "Hors service"
+
+    name = models.CharField(max_length=100, unique=True)
+    model = models.CharField(max_length=100, blank=True, help_text="Manufacturer / model reference")
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class Room(models.Model):
+    """A treatment or consultation room."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        MAINTENANCE = "maintenance", "En maintenance"
+        CLOSED = "closed", "Fermée"
+
+    name = models.CharField(max_length=100, unique=True)
+    location = models.CharField(max_length=150, blank=True, help_text="Building / floor / wing")
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+def _generate_mrn() -> str:
+    """Generate a unique Medical Record Number in the format MRN-YYYY-NNNN.
+
+    Uses the current year and the next available sequence number.
+    Collision-safe: if the candidate already exists (e.g. after a deletion
+    left a gap), we increment until we find a free slot.
+    Called from Patient.save() when medical_record_number is blank.
+    """
+    from django.utils import timezone
+    year = timezone.now().year
+    last = (
+        Patient.objects.filter(medical_record_number__startswith=f"MRN-{year}-")
+        .order_by("-medical_record_number")
+        .first()
+    )
+    if last:
+        try:
+            seq = int(last.medical_record_number.split("-")[-1]) + 1
+        except (ValueError, IndexError):
+            seq = 1
+    else:
+        seq = 1
+
+    candidate = f"MRN-{year}-{seq:04d}"
+    while Patient.objects.filter(medical_record_number=candidate).exists():
+        seq += 1
+        candidate = f"MRN-{year}-{seq:04d}"
+    return candidate
+
+
+class Patient(models.Model):
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     cin = models.CharField(max_length=20, unique=True, blank=True, null=True)
@@ -11,7 +95,10 @@ class Patient (models.Model):
     birth_date = models.DateField(blank=True, null=True)
     address = models.TextField(blank=True)
 
-    medical_record_number = models.CharField(max_length=50, unique=True)
+    # MRN is auto-generated on first save if left blank.
+    # Callers may supply their own value (e.g. migrating from a legacy system)
+    # but the field is still enforced as unique at DB level.
+    medical_record_number = models.CharField(max_length=50, unique=True, blank=True)
     diagnosis = models.TextField(blank=True)
     notes = models.TextField(blank=True)
 
@@ -23,6 +110,12 @@ class Patient (models.Model):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
+
+    def save(self, *args, **kwargs):
+        # Auto-generate MRN on creation if not supplied by the caller.
+        if not self.medical_record_number:
+            self.medical_record_number = _generate_mrn()
+        super().save(*args, **kwargs)
     
 class Appointment(models.Model):
     class Status(models.TextChoices):
@@ -117,8 +210,20 @@ class TreatmentSession(models.Model):
         choices=Status.choices,
         default=Status.SCHEDULED,
     )
-    machine = models.CharField(max_length=100, blank=True)
-    room = models.CharField(max_length=100, blank=True)
+    machine = models.ForeignKey(
+        Machine,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sessions",
+    )
+    room = models.ForeignKey(
+        Room,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sessions",
+    )
     dose_delivered = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     notes = models.TextField(blank=True)
 
@@ -131,6 +236,81 @@ class TreatmentSession(models.Model):
 
     def __str__(self):
         return f"Session {self.session_number} - {self.patient}"
+
+    @property
+    def cumulative_dose(self):
+        """Sum of dose_delivered across all COMPLETED sessions on this plan
+        including this session if it is already completed."""
+        from django.db.models import Sum
+        qs = TreatmentSession.objects.filter(
+            treatment_plan_id=self.treatment_plan_id,
+            status=TreatmentSession.Status.COMPLETED,
+        )
+        return qs.aggregate(total=Sum("dose_delivered"))["total"] or 0
+
+    def clean(self):
+        """Dose safety guard — blocks saving a session whose dose would push
+        the cumulative total past the plan's prescribed dose.
+
+        90–100 % of total_dose → ValidationError with level WARNING.
+          The frontend shows a yellow alert; a doctor can acknowledge and
+          resubmit. The backend still blocks — the doctor must update the
+          plan's total_dose before the session can be saved.
+
+        > 100 % of total_dose → hard block, always.
+        """
+        if not self.treatment_plan_id or not self.dose_delivered:
+            return
+
+        plan = self.treatment_plan
+        if not plan.total_dose or float(plan.total_dose) <= 0:
+            return
+
+        from django.db.models import Sum
+        qs = TreatmentSession.objects.filter(
+            treatment_plan=plan,
+            status=TreatmentSession.Status.COMPLETED,
+        )
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+
+        cumulative_others = qs.aggregate(total=Sum("dose_delivered"))["total"] or 0
+        cumulative_with_this = float(cumulative_others) + float(self.dose_delivered)
+        ratio = cumulative_with_this / float(plan.total_dose)
+
+        if ratio > 1.0:
+            raise ValidationError({
+                "dose_delivered": (
+                    f"BLOCAGE : La dose cumulée ({cumulative_with_this:.2f} Gy) "
+                    f"dépasserait la dose totale prescrite ({plan.total_dose:.2f} Gy). "
+                    "Modifiez le plan de traitement avant de continuer."
+                )
+            })
+        if ratio >= 0.9:
+            raise ValidationError({
+                "dose_delivered": (
+                    f"ALERTE 90% : La dose cumulée atteindra {cumulative_with_this:.2f} Gy "
+                    f"({ratio * 100:.0f}% de {plan.total_dose:.2f} Gy prescrits). "
+                    "Vérifiez avec le médecin responsable avant de valider."
+                )
+            })
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+        # Auto-complete the plan when all sessions are done.
+        plan = self.treatment_plan
+        if plan.status == TreatmentPlan.Status.ACTIVE:
+            all_done = not plan.sessions.exclude(
+                status__in=[
+                    TreatmentSession.Status.COMPLETED,
+                    TreatmentSession.Status.CANCELLED,
+                ]
+            ).exists()
+            if all_done:
+                TreatmentPlan.objects.filter(pk=plan.pk).update(
+                    status=TreatmentPlan.Status.COMPLETED
+                )
 
 
 class Ticket(models.Model):
@@ -149,6 +329,15 @@ class Ticket(models.Model):
         EN_ATTENTE = "En attente", "En attente"
         RESOLU = "Résolu", "Résolu"
         FERME = "Fermé", "Fermé"
+
+    # SLA resolution deadlines per priority (in hours).
+    # These match the matrice SLA in the cahier des charges §3.1.
+    SLA_HOURS: dict[str, int] = {
+        "Critique": 4,
+        "Élevée":   24,
+        "Moyenne":  72,
+        "Faible":   168,  # 7 days
+    }
 
     numero = models.CharField(max_length=50, unique=True, editable=False)
     titre = models.CharField(max_length=255)
@@ -174,6 +363,24 @@ class Ticket(models.Model):
         blank=True,
     )
 
+    # ── SLA fields ────────────────────────────────────────────────────────────
+    # sla_deadline: computed at creation from priorite → SLA_HOURS.
+    # Stored on the model so the SLA engine can query it efficiently without
+    # recomputing it every time.
+    sla_deadline = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Auto-set at creation: created_at + SLA hours for this priority.",
+    )
+    # sla_breached: set to True by the SLA engine command when now > sla_deadline
+    # and the ticket is still open. Stored so the dashboard can filter/count
+    # breached tickets with a simple DB query instead of Python-side filtering.
+    sla_breached = models.BooleanField(
+        default=False,
+        help_text="Set by the SLA engine when the resolution deadline is missed.",
+    )
+    # resolved_at: set automatically when statut transitions to Résolu or Fermé.
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -183,9 +390,79 @@ class Ticket(models.Model):
     def __str__(self):
         return f"{self.numero} - {self.titre}"
 
+    # ── SLA helpers ───────────────────────────────────────────────────────────
+
+    @property
+    def sla_hours(self) -> int:
+        """Resolution SLA in hours for this ticket's priority."""
+        return self.SLA_HOURS.get(self.priorite, 168)
+
+    @property
+    def is_open(self) -> bool:
+        return self.statut not in (self.Status.RESOLU, self.Status.FERME)
+
+    @property
+    def sla_status(self) -> str:
+        """Human-readable SLA status for the serializer / frontend badge.
+
+        Returns one of: 'ok' | 'warning' | 'breached' | 'resolved'
+        - 'resolved'  ticket is closed — SLA no longer relevant
+        - 'ok'        deadline not yet reached
+        - 'warning'   within the last 25% of the allowed window (yellow)
+        - 'breached'  past the deadline (red)
+        """
+        if not self.is_open:
+            return "resolved"
+        if self.sla_breached:
+            return "breached"
+        if not self.sla_deadline:
+            return "ok"
+        from django.utils import timezone
+        now = timezone.now()
+        if now >= self.sla_deadline:
+            return "breached"
+        # Warning: entered the last 25% of the SLA window
+        total_seconds = self.sla_hours * 3600
+        elapsed = (now - self.created_at).total_seconds()
+        if elapsed >= total_seconds * 0.75:
+            return "warning"
+        return "ok"
+
+    @property
+    def sla_remaining_minutes(self) -> int | None:
+        """Minutes remaining until SLA deadline. Negative if already breached."""
+        if not self.sla_deadline or not self.is_open:
+            return None
+        from django.utils import timezone
+        delta = self.sla_deadline - timezone.now()
+        return int(delta.total_seconds() / 60)
+
     def save(self, *args, **kwargs):
+        from django.utils import timezone
+
+        is_new = self.pk is None
+
+        # Auto-generate ticket number on creation
         if not self.numero:
             self.numero = self._generate_numero()
+
+        # Set SLA deadline once at creation based on priority
+        if is_new and not self.sla_deadline:
+            self.sla_deadline = timezone.now() + timezone.timedelta(
+                hours=self.sla_hours
+            )
+
+        # Auto-set resolved_at when ticket is closed
+        terminal = (self.Status.RESOLU, self.Status.FERME)
+        if self.statut in terminal and not self.resolved_at:
+            self.resolved_at = timezone.now()
+        elif self.statut not in terminal:
+            self.resolved_at = None
+
+        # Clear breach flag if ticket is resolved
+        if not self.is_open:
+            self.sla_breached = False
+
         super().save(*args, **kwargs)
 
     @staticmethod
@@ -193,7 +470,6 @@ class Ticket(models.Model):
         last = Ticket.objects.order_by("-id").first()
         next_id = (last.id + 1) if last else 1
         candidate = f"TCK-{next_id:03d}"
-        # Guard against gaps/deletions causing a collision.
         while Ticket.objects.filter(numero=candidate).exists():
             next_id += 1
             candidate = f"TCK-{next_id:03d}"

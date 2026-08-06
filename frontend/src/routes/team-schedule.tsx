@@ -29,8 +29,10 @@ import {
   deleteShift,
   fetchShifts,
   updateShift,
+  type ApiShift,
   type ShiftStatus,
 } from "@/lib/shifts-api";
+import { fetchLeaveRequests, type ApiLeaveRequest } from "@/lib/leaves-api";
 
 export const Route = createFileRoute("/team-schedule")({
   component: TeamSchedulePage,
@@ -48,6 +50,17 @@ function toInputDateTime(value: Date) {
   return value.toISOString().slice(0, 16);
 }
 
+/** Returns true if the shift falls inside an approved leave for the same employee */
+function isBlockedByLeave(shift: ApiShift, leaves: ApiLeaveRequest[]): ApiLeaveRequest | undefined {
+  const shiftDate = new Date(shift.start_datetime).toISOString().slice(0, 10);
+  return leaves.find(
+    (l) =>
+      l.employee === shift.employee &&
+      shiftDate >= l.date_debut &&
+      shiftDate <= l.date_fin
+  );
+}
+
 function TeamSchedulePage() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
@@ -58,6 +71,14 @@ function TeamSchedulePage() {
 
   const shifts = shiftsQuery.data ?? [];
   const employees = employeesQuery.data ?? [];
+  
+  const leavesQuery = useQuery({
+    queryKey: ["leave-requests"],
+    queryFn: fetchLeaveRequests,
+  });
+  const approvedLeaves = (leavesQuery.data ?? []).filter(
+    (l) => l.statut === "Acceptée"
+  );
 
   const createMutation = useMutation({
     mutationFn: createShift,
@@ -217,10 +238,28 @@ function TeamSchedulePage() {
                   className="flex flex-col gap-3 rounded-md border p-4 md:flex-row md:items-center md:justify-between"
                 >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <CalendarDays className="h-4 w-4 text-muted-foreground" />
                       <p className="font-medium">{shift.title}</p>
-                      <Badge variant="secondary">{statusLabel(shift.status)}</Badge>
+                      <Badge
+                        className={
+                          shift.status === "cancelled"
+                            ? "bg-destructive/15 text-destructive border-0"
+                            : shift.status === "confirmed"
+                            ? "bg-success/15 text-success border-0"
+                            : "bg-muted text-muted-foreground border-0"
+                        }
+                      >
+                        {statusLabel(shift.status)}
+                      </Badge>
+                      {(() => {
+                        const leave = isBlockedByLeave(shift, approvedLeaves);
+                        return leave ? (
+                          <Badge className="bg-warning/15 text-warning border-0">
+                            Congé approuvé · {leave.date_debut} → {leave.date_fin}
+                          </Badge>
+                        ) : null;
+                      })()}
                     </div>
                     <p className="text-sm text-muted-foreground">
                       {shift.employee_name} · {new Date(shift.start_datetime).toLocaleString()} →{" "}

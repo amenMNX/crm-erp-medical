@@ -1,7 +1,9 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Sum
+from django.utils import timezone
 
 from apps.crm.models import Patient, TreatmentPlan
 
@@ -63,9 +65,97 @@ class Invoice(models.Model):
             self.status = next_status
             self.save(update_fields=["status", "updated_at"])
 
+    def _generate_invoice_number(self):
+        prefix = "IN-"
+        last_invoice = (
+            Invoice.objects
+            .filter(invoice_number__startswith=prefix)
+            .order_by("-invoice_number")
+            .first()
+        )
+
+        if not last_invoice:
+            return f"{prefix}0001"
+
+        try:
+            last_number = int(last_invoice.invoice_number.split("-")[-1])
+        except ValueError:
+            last_number = 0
+
+        return f"{prefix}{last_number + 1:04d}"
+
+    def recalculate_totals(self):
+        totals = self.line_items.aggregate(
+            subtotal=Sum("line_subtotal"),
+            tax=Sum("line_tax"),
+            total=Sum("line_total"),
+        )
+
+        self.subtotal = totals["subtotal"] or Decimal("0.00")
+        self.tax_amount = totals["tax"] or Decimal("0.00")
+        self.total_amount = totals["total"] or Decimal("0.00")
+        self.save(update_fields=["subtotal", "tax_amount", "total_amount", "updated_at"])
+        self.refresh_payment_status()
+
+    def save(self, *args, **kwargs):
+        if not self.invoice_number:
+            self.invoice_number = self._generate_invoice_number()
+        super().save(*args, **kwargs)
+        
     def __str__(self):
         return self.invoice_number
-    
+
+class InvoiceLineItem(models.Model):
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="line_items",
+    )
+    description = models.CharField(max_length=255)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("1.00"))
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    tax_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Tax percentage. Example: 19.00 for 19%",
+    )
+    line_subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    line_tax = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    line_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def clean(self):
+        if self.quantity <= 0:
+            raise ValidationError({"quantity": "Quantity must be greater than zero."})
+        if self.unit_price < 0:
+            raise ValidationError({"unit_price": "Unit price cannot be negative."})
+        if self.tax_rate < 0:
+            raise ValidationError({"tax_rate": "Tax rate cannot be negative."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+
+        self.line_subtotal = self.quantity * self.unit_price
+        self.line_tax = self.line_subtotal * self.tax_rate / Decimal("100.00")
+        self.line_total = self.line_subtotal + self.line_tax
+
+        super().save(*args, **kwargs)
+        self.invoice.recalculate_totals()
+
+    def delete(self, *args, **kwargs):
+        invoice = self.invoice
+        result = super().delete(*args, **kwargs)
+        invoice.recalculate_totals()
+        return result
+
+    def __str__(self):
+        return f"{self.invoice.invoice_number} - {self.description}"
+
 class Payment(models.Model):
     class Method(models.TextChoices):
         CASH = "cash", "Cash"
@@ -241,3 +331,46 @@ class SubscriptionChange(models.Model):
         prev = self.previous_plan.name if self.previous_plan else "None"
         new = self.new_plan.name if self.new_plan else "None"
         return f"{self.patient} | {prev} → {new} ({self.effective_date})"
+
+class OutgoingPayment(models.Model):
+    """
+    Records a cash outflow that is NOT linked to a patient invoice.
+    Currently used for salary advance payouts; can be extended for
+    supplier payments, maintenance costs, etc.
+    """
+
+    class Category(models.TextChoices):
+        SALARY_ADVANCE = "salary_advance", "Avance sur salaire"
+        SUPPLIER      = "supplier",       "Fournisseur"
+        OTHER         = "other",          "Autre"
+
+    class Method(models.TextChoices):
+        CASH          = "cash",          "Espèces"
+        BANK_TRANSFER = "bank_transfer", "Virement bancaire"
+        CHECK         = "check",         "Chèque"
+
+    reference        = models.CharField(max_length=100, unique=True)
+    category         = models.CharField(
+        max_length=30,
+        choices=Category.choices,
+        default=Category.OTHER,
+    )
+    amount           = models.DecimalField(max_digits=10, decimal_places=2)
+    payment_date     = models.DateField()
+    method           = models.CharField(
+        max_length=30,
+        choices=Method.choices,
+        default=Method.BANK_TRANSFER,
+    )
+    description      = models.TextField(blank=True)
+    # Generic link to the source object (e.g. the SalaryAdvance id)
+    source_object_id = models.PositiveIntegerField(null=True, blank=True)
+
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-payment_date", "-created_at"]
+
+    def __str__(self):
+        return f"{self.reference} — {self.amount} ({self.get_category_display()})"
