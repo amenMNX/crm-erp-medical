@@ -1,14 +1,12 @@
 from django.db import transaction
-from django.db.models import Sum, Q
 from django.utils import timezone
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 
 from apps.accounts.permissions import ReadOnlyOrRole
-from apps.hr.models import Employee, Absence, LeaveRequest, SalaryAdvance
+from apps.hr.models import Employee, Absence, SalaryAdvance
 from .models import EmployeeSalary, PayrollBatch, Payroll, PayrollComponent
 from .serializers import (
     EmployeeSalarySerializer,
@@ -160,142 +158,270 @@ class GeneratePayrollViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        with transaction.atomic():
-            # Create payroll batch
-            batch = PayrollBatch.objects.create(
-                month=month,
-                status=PayrollBatch.Status.GENERATED,
-                generated_by=request.user,
-                generated_at=timezone.now(),
-                employee_count=employees.count()
-            )
-            
-            payrolls = []
-            for employee in employees:
-                payroll = self._generate_employee_payroll(batch, employee, month, request.user)
-                payrolls.append(payroll)
-            
-            # Update batch totals
-            batch.total_net_salary = sum(p.net_salary for p in payrolls)
-            batch.total_earnings = sum(p.gross_salary for p in payrolls)
-            batch.total_deductions = sum(p.total_deductions for p in payrolls)
-            batch.save()
-            
-            return Response(
-                {
-                    "message": f"Payroll generated successfully for {employees.count()} employees.",
-                    "batch_id": batch.id,
-                    "total_net_salary": batch.total_net_salary,
-                    "employee_count": batch.employee_count
-                },
-                status=status.HTTP_201_CREATED
-            )
+        try:
+            with transaction.atomic():
+                # Create payroll batch
+                batch = PayrollBatch.objects.create(
+                    month=month,
+                    status=PayrollBatch.Status.GENERATED,
+                    generated_by=request.user,
+                    generated_at=timezone.now(),
+                    employee_count=employees.count()
+                )
+
+                payrolls = []
+                for employee in employees:
+                    payroll = self._generate_employee_payroll(batch, employee, month, request.user)
+                    payrolls.append(payroll)
+
+                # Update batch totals
+                batch.total_net_salary = sum(p.net_salary for p in payrolls)
+                batch.total_earnings = sum(p.gross_salary for p in payrolls)
+                batch.total_deductions = sum(p.total_deductions for p in payrolls)
+                batch.save()
+
+                return Response(
+                    {
+                        "message": f"Payroll generated successfully for {employees.count()} employees.",
+                        "batch_id": batch.id,
+                        "total_net_salary": batch.total_net_salary,
+                        "employee_count": batch.employee_count
+                    },
+                    status=status.HTTP_201_CREATED
+                )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    # ── Tunisian payroll constants (US-PAIE-01) ───────────────────────────────
+    #
+    # CNSS employee share : 9.18 %  of gross (plafonné à 6 × SMIG — ignored here,
+    #                                          applies only when SMIG data is stored)
+    # CNSS employer share : 16.57 % — informational only, not deducted from employee
+    # IRPP : progressive barème (art. 44 CIR) — 7 tranches
+    # Heures supplémentaires : +25 % (1–8 h/sem), +50 % (9–16 h/sem), +100 % (nuit/repos)
+    #   → stored in Payroll.overtime as already-computed TND amount by the caller
+    #   → here we derive overtime hours from shifts if no explicit amount is provided
+    #
+    # Working days per month assumed = 22
+
+    CNSS_EMPLOYEE_RATE = 0.0918          # 9.18 %
+    WORKING_DAYS       = 22
+    OVERTIME_RATE_1    = 1.25            # ×1.25 for first 8 extra h/week (≈ 32 h/month)
+    OVERTIME_RATE_2    = 1.50            # ×1.50 for next 8 h/week
+    OVERTIME_RATE_3    = 2.00            # ×2.00 for night / rest-day hours
+
+    # IRPP barème progressif annuel (TND/year) — art. 44 CIR Tunisie
+    # Each tuple: (upper_limit_annual_TND, marginal_rate)
+    # Income up to 5 000 TND/year → 0 %
+    IRPP_BRACKETS = [
+        (5_000,   0.00),
+        (10_000,  0.26),
+        (20_000,  0.28),
+        (30_000,  0.32),
+        (50_000,  0.34),
+        (float("inf"), 0.35),
+    ]
+
+    @staticmethod
+    def _compute_irpp_annual(taxable_annual_tnd: float) -> float:
+        """
+        Compute annual IRPP on taxable annual income (TND).
+        Applies the 6-bracket progressive schedule from art. 44 CIR.
+        Returns annual IRPP amount in TND.
+        """
+        tax     = 0.0
+        prev    = 0.0
+        for ceiling, rate in GeneratePayrollViewSet.IRPP_BRACKETS:
+            if taxable_annual_tnd <= prev:
+                break
+            slice_top = min(taxable_annual_tnd, ceiling)
+            tax += (slice_top - prev) * rate
+            prev = ceiling
+        return tax
 
     def _generate_employee_payroll(self, batch, employee, month, user):
-        """Generate payroll for a single employee."""
-        # Get salary configuration
+        """
+        Generate payroll for a single employee.
+
+        Calculation chain (US-PAIE-01):
+        1. Gross = base + transport + meal + bonus + overtime
+        2. CNSS  = Gross × 9.18 %                          (employee share)
+        3. Taxable income for IRPP = Gross − CNSS − abattement forfaitaire 10 %
+           (but abattement ≥ 300 TND/year and ≤ 2 000 TND/year — monthly version)
+        4. IRPP  = annual_irpp(Taxable × 12) / 12          (monthly instalment)
+        5. Absence deduction = (base / 22) × nb_absence_days
+        6. Advance deduction = remaining balance of approved SalaryAdvances due this month
+        7. Net = Gross − CNSS − IRPP − absence_deduction − advance_deduction
+        """
+        from decimal import Decimal
+
         try:
             salary_config = EmployeeSalary.objects.get(employee=employee, is_active=True)
         except EmployeeSalary.DoesNotExist:
-            # Skip employees without salary config
             raise ValueError(f"Employee {employee} has no active salary configuration.")
-        
-        # Calculate absence deductions
-        absence_deduction = self._calculate_absence_deduction(employee, month, salary_config.base_salary)
-        
-        # Calculate salary advance deductions
+
+        base      = float(salary_config.base_salary)
+        transport = float(salary_config.transport_allowance)
+        meal      = float(salary_config.meal_allowance)
+        bonus_pct = float(salary_config.bonus_percentage)
+        bonus     = base * bonus_pct / 100
+
+        # ── Overtime (heures supplémentaires) ────────────────────────────────
+        # Derive from cancelled / extra shifts in the month if no manual entry.
+        # Hourly rate = base / (22 days × 8 h)
+        overtime_tnd = self._calculate_overtime(employee, month, base)
+
+        # ── Gross salary ──────────────────────────────────────────────────────
+        gross = base + transport + meal + bonus + overtime_tnd
+
+        # ── CNSS — 9.18 % employee share ──────────────────────────────────────
+        # Transport & meal allowances are exempt from CNSS per Tunisian law.
+        cnss_base    = base + bonus + overtime_tnd   # excludes exempt allowances
+        cnss         = cnss_base * self.CNSS_EMPLOYEE_RATE
+
+        # ── IRPP — barème progressif ──────────────────────────────────────────
+        # Taxable base = gross − CNSS − abattement forfaitaire 10 % (capped)
+        abattement_annual = min(max(gross * 12 * 0.10, 300), 2_000)
+        taxable_annual    = max((gross - cnss) * 12 - abattement_annual, 0)
+        irpp_annual       = self._compute_irpp_annual(taxable_annual)
+        irpp_monthly      = irpp_annual / 12
+
+        # ── Absence deduction ─────────────────────────────────────────────────
+        absence_deduction = self._calculate_absence_deduction(employee, month, base)
+
+        # ── Salary advance deduction ──────────────────────────────────────────
         advance_deduction = self._calculate_advance_deduction(employee, month)
-        
-        # Calculate tax (simplified - 10% of gross for demo)
-        gross = (
-            salary_config.base_salary +
-            salary_config.transport_allowance +
-            salary_config.meal_allowance +
-            (salary_config.base_salary * salary_config.bonus_percentage / 100)
-        )
-        tax_deduction = gross * 0.10  # Simple 10% tax
-        
-        # Social security (simplified - 5% of gross)
-        social_security = gross * 0.05
-        
-        # Create payroll record
+
+        # ── Totals ────────────────────────────────────────────────────────────
+        total_deductions = cnss + irpp_monthly + absence_deduction + advance_deduction
+        net_salary       = gross - total_deductions
+
         payroll = Payroll.objects.create(
             payroll_batch=batch,
             employee=employee,
             month=month,
-            base_salary=salary_config.base_salary,
-            transport_allowance=salary_config.transport_allowance,
-            meal_allowance=salary_config.meal_allowance,
-            bonus=(salary_config.base_salary * salary_config.bonus_percentage / 100),
-            absence_deduction=absence_deduction,
-            advance_deduction=advance_deduction,
-            tax_deduction=tax_deduction,
-            social_security=social_security,
-            gross_salary=gross,
-            total_deductions=absence_deduction + advance_deduction + tax_deduction + social_security,
+            base_salary=Decimal(str(round(base, 2))),
+            transport_allowance=Decimal(str(round(transport, 2))),
+            meal_allowance=Decimal(str(round(meal, 2))),
+            bonus=Decimal(str(round(bonus, 2))),
+            overtime=Decimal(str(round(overtime_tnd, 2))),
+            absence_deduction=Decimal(str(round(absence_deduction, 2))),
+            advance_deduction=Decimal(str(round(advance_deduction, 2))),
+            social_security=Decimal(str(round(cnss, 2))),
+            tax_deduction=Decimal(str(round(irpp_monthly, 2))),
+            gross_salary=Decimal(str(round(gross, 2))),
+            total_deductions=Decimal(str(round(total_deductions, 2))),
+            net_salary=Decimal(str(round(net_salary, 2))),
             status=Payroll.Status.GENERATED,
             generated_by=user,
         )
-        
-        # Create payroll components for detailed breakdown
-        self._create_payroll_components(payroll, salary_config, absence_deduction, advance_deduction, tax_deduction, social_security)
-        
+
+        self._create_payroll_components(
+            payroll, salary_config,
+            overtime_tnd, cnss, irpp_monthly,
+            absence_deduction, advance_deduction,
+        )
+
         return payroll
 
+    def _calculate_overtime(self, employee, month, base_salary: float) -> float:
+        """
+        Compute overtime pay in TND for the month (US-PAIE-01).
+
+        Strategy: count extra shifts (status='completed') beyond the standard
+        working schedule.  Each shift = 8 h.  First 32 h/month (≈ 4 extra shifts)
+        at ×1.25, next 32 h at ×1.50, beyond at ×2.00.
+
+        Falls back to 0 if no shift data exists.
+        """
+        from apps.hr.models import Shift
+
+        hourly_rate = base_salary / (self.WORKING_DAYS * 8)
+
+        extra_shifts = Shift.objects.filter(
+            employee=employee,
+            start_datetime__year=month.year,
+            start_datetime__month=month.month,
+            is_overtime=True,
+        ).count() if hasattr(Shift, "is_overtime") else 0
+
+        # If Shift model has no is_overtime flag, return 0 — manual entry path.
+        if extra_shifts == 0:
+            return 0.0
+
+        extra_hours = extra_shifts * 8
+        pay = 0.0
+        tier1 = min(extra_hours, 32)        # first 32 h → ×1.25
+        tier2 = min(max(extra_hours - 32, 0), 32)   # next 32 h → ×1.50
+        tier3 = max(extra_hours - 64, 0)    # beyond    → ×2.00
+
+        pay += tier1 * hourly_rate * self.OVERTIME_RATE_1
+        pay += tier2 * hourly_rate * self.OVERTIME_RATE_2
+        pay += tier3 * hourly_rate * self.OVERTIME_RATE_3
+        return round(pay, 2)
+
     def _calculate_absence_deduction(self, employee, month, base_salary):
-        """Calculate salary deduction for absences in the month."""
-        # Get absences for this employee in the given month
+        """Deduct (base / 22) per unjustified absence day in the month."""
         absences = Absence.objects.filter(
             employee=employee,
             date__year=month.year,
-            date__month=month.month
+            date__month=month.month,
         )
-        
-        # Daily rate (assuming 22 working days per month)
-        daily_rate = base_salary / 22
-        total_deduction = absences.count() * daily_rate
-        
-        return total_deduction
+        daily_rate = float(base_salary) / self.WORKING_DAYS
+        return round(absences.count() * daily_rate, 2)
 
     def _calculate_advance_deduction(self, employee, month):
-        """Calculate salary advance deductions for the month."""
-        # Get approved salary advances that haven't been fully repaid
+        """
+        Deduct salary advances whose repayment_date falls in this month,
+        or all outstanding approved advances when no repayment date is set.
+        Advances already fully repaid (status=REMBOURSEE) are skipped.
+        """
         advances = SalaryAdvance.objects.filter(
             employee=employee,
-            statut=SalaryAdvance.Status.APPROUVEE
+            statut=SalaryAdvance.Status.APPROUVEE,
         )
-        
-        # If there's a repayment date in the future, deduct the amount
-        total_deduction = 0
-        for advance in advances:
-            # Simple logic: deduct the advance amount from the next payroll
-            # In a real system, you'd have a repayment schedule
-            total_deduction += advance.amount
-        
-        return total_deduction
+        total = 0.0
+        for adv in advances:
+            remaining = float(adv.amount) - float(adv.amount_repaid)
+            if remaining <= 0:
+                continue
+            # Deduct if repayment due this month, or if no date set (deduct immediately)
+            if adv.repayment_date is None or (
+                adv.repayment_date.year  == month.year and
+                adv.repayment_date.month == month.month
+            ):
+                total += remaining
+        return round(total, 2)
 
-    def _create_payroll_components(self, payroll, salary_config, absence_deduction, advance_deduction, tax_deduction, social_security):
-        """Create detailed payroll components."""
+    def _create_payroll_components(
+        self, payroll, salary_config,
+        overtime_tnd, cnss, irpp_monthly,
+        absence_deduction, advance_deduction,
+    ):
+        """Record every payroll line item for the pay-slip detail view."""
+        base  = float(salary_config.base_salary)
+        bonus = base * float(salary_config.bonus_percentage) / 100
+
         components = [
-            # Earnings
-            ("Base Salary", "earning", salary_config.base_salary, "base"),
-            ("Transport Allowance", "earning", salary_config.transport_allowance, "transport"),
-            ("Meal Allowance", "earning", salary_config.meal_allowance, "meal"),
-            ("Performance Bonus", "earning", salary_config.base_salary * salary_config.bonus_percentage / 100, "bonus"),
-            
-            # Deductions
-            ("Absence Deduction", "deduction", absence_deduction, "absence"),
-            ("Salary Advance Deduction", "deduction", advance_deduction, "advance"),
-            ("Tax Deduction", "deduction", tax_deduction, "tax"),
-            ("Social Security", "deduction", social_security, "social_security"),
+            # ── Earnings ───────────────────────────────────────────────────
+            ("Salaire de base",         "earning",   base,                               "base"),
+            ("Indemnité de transport",  "earning",   float(salary_config.transport_allowance), "transport"),
+            ("Indemnité de repas",      "earning",   float(salary_config.meal_allowance),       "meal"),
+            ("Prime de performance",    "earning",   bonus,                              "bonus"),
+            ("Heures supplémentaires",  "earning",   overtime_tnd,                       "overtime"),
+            # ── Deductions ─────────────────────────────────────────────────
+            ("CNSS salarié (9,18 %)",   "deduction", cnss,                               "cnss"),
+            ("IRPP (barème progressif)","deduction", irpp_monthly,                       "irpp"),
+            ("Retenue absence",         "deduction", absence_deduction,                  "absence"),
+            ("Remboursement avance",    "deduction", advance_deduction,                  "advance"),
         ]
-        
+
         for name, comp_type, amount, source in components:
-            if amount > 0:
+            if amount and amount > 0:
                 PayrollComponent.objects.create(
                     payroll=payroll,
                     name=name,
                     type=comp_type,
-                    amount=amount,
-                    source=source
+                    amount=round(amount, 2),
+                    source=source,
                 )

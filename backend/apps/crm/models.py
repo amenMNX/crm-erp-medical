@@ -1,22 +1,55 @@
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import models
 from django.core.exceptions import ValidationError
+import secrets
+from django.contrib.auth.hashers import make_password, check_password
+from django.utils import timezone
+
+User = get_user_model()
 
 class Machine(models.Model):
-    """A radiotherapy machine (LINAC, CT-sim, etc.) available for treatment sessions."""
+    """A radiotherapy machine (LINAC, CT-sim, etc.) available for treatment sessions.
+    US-EQUIP-01: full lifecycle with MTBF/MTTR/disponibilité, amortissement, calibration alerts.
+    """
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
         MAINTENANCE = "maintenance", "En maintenance"
         DECOMMISSIONED = "decommissioned", "Hors service"
 
+    # ── Identity ──────────────────────────────────────────────────────────────
     name = models.CharField(max_length=100, unique=True)
     model = models.CharField(max_length=100, blank=True, help_text="Manufacturer / model reference")
+    serial_number = models.CharField(max_length=100, blank=True)
+    manufacturer = models.CharField(max_length=100, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
         default=Status.ACTIVE,
     )
+    location = models.CharField(max_length=150, blank=True, help_text="Room / building")
+
+    # ── Lifecycle & amortissement ─────────────────────────────────────────────
+    purchase_date = models.DateField(blank=True, null=True)
+    purchase_cost = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True,
+                                        help_text="Coût d'acquisition en TND")
+    useful_life_years = models.PositiveSmallIntegerField(default=10,
+                                                          help_text="Durée d'amortissement en années")
+    residual_value = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+                                          help_text="Valeur résiduelle TND")
+
+    # ── Calibration ───────────────────────────────────────────────────────────
+    last_calibration_date = models.DateField(blank=True, null=True)
+    next_calibration_date = models.DateField(blank=True, null=True)
+    calibration_interval_days = models.PositiveIntegerField(default=365,
+                                                              help_text="Intervalle de calibration en jours")
+
+    # ── Reliability metrics (computed / stored) ───────────────────────────────
+    # MTBF & MTTR are stored in hours and updated by maintenance log signals.
+    mtbf_hours = models.FloatField(default=0, help_text="Mean Time Between Failures (heures)")
+    mttr_hours = models.FloatField(default=0, help_text="Mean Time To Repair (heures)")
+
     notes = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -27,6 +60,127 @@ class Machine(models.Model):
 
     def __str__(self):
         return self.name
+
+    # ── Computed properties ───────────────────────────────────────────────────
+    @property
+    def disponibilite(self):
+        """Taux de disponibilité = MTBF / (MTBF + MTTR) × 100 %"""
+        total = self.mtbf_hours + self.mttr_hours
+        if total == 0:
+            return None
+        return round(self.mtbf_hours / total * 100, 2)
+
+    @property
+    def annual_depreciation(self):
+        """Amortissement linéaire annuel en TND"""
+        if self.purchase_cost is None:
+            return None
+        life = self.useful_life_years or 1
+        from decimal import Decimal
+        return round((self.purchase_cost - self.residual_value) / Decimal(str(life)), 2)
+
+    @property
+    def book_value(self):
+        """Valeur nette comptable actuelle"""
+        if self.purchase_cost is None or self.purchase_date is None or self.annual_depreciation is None:
+            return None
+        from django.utils import timezone
+        from decimal import Decimal
+        years_elapsed = (timezone.now().date() - self.purchase_date).days / 365.25
+        depreciated = self.annual_depreciation * Decimal(str(min(years_elapsed, self.useful_life_years)))
+        return max(self.purchase_cost - depreciated, self.residual_value)
+
+    @property
+    def calibration_overdue(self):
+        """True si la prochaine calibration est dépassée"""
+        if not self.next_calibration_date:
+            return False
+        from django.utils import timezone
+        return self.next_calibration_date < timezone.now().date()
+
+
+class MaintenanceLog(models.Model):
+    """Journal des interventions de maintenance sur un équipement (US-EQUIP-01)."""
+
+    class Type(models.TextChoices):
+        PREVENTIVE  = "preventive",  "Préventive"
+        CORRECTIVE  = "corrective",  "Corrective"
+        CALIBRATION = "calibration", "Calibration"
+        INSPECTION  = "inspection",  "Inspection"
+
+    class Result(models.TextChoices):
+        OK       = "ok",       "OK — Opérationnel"
+        REPAIRED = "repaired", "Réparé"
+        PARTIAL  = "partial",  "Partiellement résolu"
+        FAILED   = "failed",   "Échec / Renvoi fournisseur"
+
+    machine          = models.ForeignKey(Machine, on_delete=models.CASCADE,
+                                          related_name="maintenance_logs")
+    intervention_type = models.CharField(max_length=20, choices=Type.choices,
+                                          default=Type.PREVENTIVE)
+    start_datetime   = models.DateTimeField()
+    end_datetime     = models.DateTimeField(blank=True, null=True)
+    technician       = models.CharField(max_length=150, blank=True)
+    description      = models.TextField(blank=True)
+    result           = models.CharField(max_length=20, choices=Result.choices,
+                                         blank=True)
+    cost             = models.DecimalField(max_digits=10, decimal_places=2,
+                                            blank=True, null=True,
+                                            help_text="Coût de l'intervention TND")
+    next_service_date = models.DateField(blank=True, null=True)
+    notes            = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-start_datetime"]
+
+    def __str__(self):
+        return f"{self.machine.name} — {self.get_intervention_type_display()} ({self.start_datetime.date()})"
+
+    @property
+    def duration_hours(self):
+        if self.end_datetime and self.start_datetime:
+            delta = self.end_datetime - self.start_datetime
+            return round(delta.total_seconds() / 3600, 2)
+        return None
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Recompute MTBF/MTTR on the parent machine after any maintenance log change
+        self.machine._recompute_reliability()
+
+    def delete(self, *args, **kwargs):
+        machine = self.machine
+        super().delete(*args, **kwargs)
+        machine._recompute_reliability()
+
+
+# Attach _recompute_reliability to Machine (avoids circular import)
+def _machine_recompute_reliability(self):
+    """Recompute MTBF and MTTR from corrective maintenance logs."""
+    logs = self.maintenance_logs.filter(
+        intervention_type=MaintenanceLog.Type.CORRECTIVE,
+        end_datetime__isnull=False,
+    ).order_by("start_datetime")
+
+    durations = []
+    gaps = []
+    prev_end = None
+    for log in logs:
+        dur = (log.end_datetime - log.start_datetime).total_seconds() / 3600
+        durations.append(dur)
+        if prev_end:
+            gap = (log.start_datetime - prev_end).total_seconds() / 3600
+            gaps.append(gap)
+        prev_end = log.end_datetime
+
+    self.mttr_hours = round(sum(durations) / len(durations), 2) if durations else 0
+    self.mtbf_hours = round(sum(gaps) / len(gaps), 2) if gaps else 0
+    Machine.objects.filter(pk=self.pk).update(mtbf_hours=self.mtbf_hours, mttr_hours=self.mttr_hours)
+
+Machine._recompute_reliability = _machine_recompute_reliability
 
 
 class Room(models.Model):
@@ -253,9 +407,9 @@ class TreatmentSession(models.Model):
         the cumulative total past the plan's prescribed dose.
 
         90–100 % of total_dose → ValidationError with level WARNING.
-          The frontend shows a yellow alert; a doctor can acknowledge and
-          resubmit. The backend still blocks — the doctor must update the
-          plan's total_dose before the session can be saved.
+        The frontend shows a yellow alert; a doctor can acknowledge and
+        resubmit. The backend still blocks — the doctor must update the
+        plan's total_dose before the session can be saved.
 
         > 100 % of total_dose → hard block, always.
         """
@@ -624,3 +778,686 @@ class TicketComment(models.Model):
 
     def __str__(self):
         return f"Comment on {self.ticket.numero} by {self.author}"
+ 
+# ─── 1. Compte Portail Patient ────────────────────────────────────────────────
+ 
+class PatientPortalAccount(models.Model):
+    """
+    Compte d'accès au portail pour un patient.
+    Distinct du modèle User du staff — authentification par email + mot de passe.
+    """
+    patient = models.OneToOneField(
+        "Patient",
+        on_delete=models.CASCADE,
+        related_name="portal_account",
+    )
+    email = models.EmailField(unique=True)
+    password_hash = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+ 
+    # Notifications opt-in / opt-out
+    notify_email = models.BooleanField(default=True)
+    notify_sms = models.BooleanField(default=False)
+ 
+    # Sécurité
+    last_login = models.DateTimeField(null=True, blank=True)
+    failed_login_attempts = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+ 
+    # Reset de mot de passe
+    reset_token = models.CharField(max_length=64, blank=True)
+    reset_token_expires = models.DateTimeField(null=True, blank=True)
+ 
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+ 
+    class Meta:
+        verbose_name = "Compte Portail Patient"
+        verbose_name_plural = "Comptes Portail Patients"
+ 
+    def __str__(self):
+        return f"Portal: {self.email} ({self.patient})"
+ 
+    def set_password(self, raw_password: str):
+        self.password_hash = make_password(raw_password)
+ 
+    def check_password(self, raw_password: str) -> bool:
+        return check_password(raw_password, self.password_hash)
+ 
+    def generate_reset_token(self) -> str:
+        token = secrets.token_urlsafe(32)
+        self.reset_token = token
+        self.reset_token_expires = timezone.now() + timezone.timedelta(hours=2)
+        return token
+ 
+    @property
+    def is_locked(self) -> bool:
+        if self.locked_until and timezone.now() < self.locked_until:
+            return True
+        return False
+ 
+    def record_failed_login(self):
+        self.failed_login_attempts += 1
+        if self.failed_login_attempts >= 5:
+            self.locked_until = timezone.now() + timezone.timedelta(minutes=15)
+        self.save(update_fields=["failed_login_attempts", "locked_until"])
+ 
+    def record_successful_login(self):
+        self.failed_login_attempts = 0
+        self.locked_until = None
+        self.last_login = timezone.now()
+        self.save(update_fields=["failed_login_attempts", "locked_until", "last_login"])
+ 
+ 
+# ─── 2. Session Portail (JWT-less — token opaque en cookie) ──────────────────
+ 
+class PatientPortalSession(models.Model):
+    account = models.ForeignKey(
+        PatientPortalAccount,
+        on_delete=models.CASCADE,
+        related_name="sessions",
+    )
+    token = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=256, blank=True)
+ 
+    class Meta:
+        ordering = ["-created_at"]
+ 
+    @classmethod
+    def create_for(cls, account: PatientPortalAccount, ip=None, ua="") -> "PatientPortalSession":
+        token = secrets.token_urlsafe(32)
+        expires = timezone.now() + timezone.timedelta(minutes=30)
+        return cls.objects.create(
+            account=account,
+            token=token,
+            expires_at=expires,
+            ip_address=ip,
+            user_agent=ua[:256],
+        )
+ 
+    @property
+    def is_valid(self) -> bool:
+        return timezone.now() < self.expires_at
+ 
+    def refresh(self):
+        """Renouvelle la session (30 min d'inactivité)."""
+        self.expires_at = timezone.now() + timezone.timedelta(minutes=30)
+        self.save(update_fields=["expires_at"])
+ 
+ 
+# ─── 3. Message Portail (messagerie sécurisée patient ↔ équipe) ──────────────
+ 
+class PortalMessage(models.Model):
+    class Direction(models.TextChoices):
+        PATIENT_TO_STAFF = "patient_to_staff", "Patient → Staff"
+        STAFF_TO_PATIENT = "staff_to_patient", "Staff → Patient"
+ 
+    patient = models.ForeignKey(
+        "Patient",
+        on_delete=models.CASCADE,
+        related_name="portal_messages",
+    )
+    direction = models.CharField(max_length=20, choices=Direction.choices)
+    # Si envoyé par le staff, référence à l'utilisateur
+    staff_author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="portal_messages_sent",
+    )
+    subject = models.CharField(max_length=200, blank=True)
+    content = models.TextField()
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+ 
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    class Meta:
+        ordering = ["-created_at"]
+ 
+    def __str__(self):
+        return f"[{self.direction}] {self.patient} — {self.created_at:%Y-%m-%d %H:%M}"
+ 
+    def mark_read(self):
+        if not self.is_read:
+            self.is_read = True
+            self.read_at = timezone.now()
+            self.save(update_fields=["is_read", "read_at"])
+ 
+ 
+# ─── 4. Notation Expérience Patient (anonyme) ────────────────────────────────
+ 
+class PatientRating(models.Model):
+    patient = models.ForeignKey(
+        "Patient",
+        on_delete=models.CASCADE,
+        related_name="ratings",
+    )
+    score = models.PositiveSmallIntegerField()  # 1–5
+    comment = models.TextField(blank=True)
+    is_anonymous = models.BooleanField(default=True)
+    # Lié à une séance spécifique (optionnel)
+    treatment_session = models.ForeignKey(
+        "TreatmentSession",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ratings",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    class Meta:
+        ordering = ["-created_at"]
+ 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if not (1 <= self.score <= 5):
+            raise ValidationError("Le score doit être entre 1 et 5.")
+ 
+    def __str__(self):
+        return f"Rating {self.score}/5 — {self.patient} ({self.created_at:%Y-%m-%d})"
+ 
+ 
+# ─── 5. Document Portail (documents téléchargeables) ────────────────────────
+ 
+class PatientDocument(models.Model):
+    class DocumentType(models.TextChoices):
+        COMPTE_RENDU = "compte_rendu", "Compte-rendu"
+        ORDONNANCE = "ordonnance", "Ordonnance"
+        IMAGERIE = "imagerie", "Imagerie"
+        PROTOCOLE = "protocole", "Protocole de traitement"
+        FACTURE = "facture", "Facture"
+        AUTRE = "autre", "Autre"
+
+    patient = models.ForeignKey(
+        "Patient",
+        on_delete=models.CASCADE,
+        related_name="documents",
+    )
+    document_type = models.CharField(max_length=20, choices=DocumentType.choices)
+    title = models.CharField(max_length=200)
+    # Stockage : chemin relatif ou URL CDN
+    file_path = models.CharField(max_length=500)
+    file_size_kb = models.PositiveIntegerField(default=0)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="uploaded_documents",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    class Meta:
+        ordering = ["-created_at"]
+ 
+    def __str__(self):
+        return f"{self.document_type} — {self.patient} — {self.title}"
+    
+# ─── 1. Disponibilités des médecins ──────────────────────────────────────────
+ 
+class DoctorAvailability(models.Model):
+    """
+    Créneaux de disponibilité hebdomadaires d'un médecin.
+    Chaque ligne = un bloc de disponibilité récurrent (ex: Lundi 8h-12h).
+    """
+    class DayOfWeek(models.IntegerChoices):
+        MONDAY    = 0, "Lundi"
+        TUESDAY   = 1, "Mardi"
+        WEDNESDAY = 2, "Mercredi"
+        THURSDAY  = 3, "Jeudi"
+        FRIDAY    = 4, "Vendredi"
+        SATURDAY  = 5, "Samedi"
+ 
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="availabilities",
+        limit_choices_to={"profile__role": "doctor"},
+    )
+    day_of_week = models.IntegerField(choices=DayOfWeek.choices)
+    start_time  = models.TimeField()
+    end_time    = models.TimeField()
+    is_active   = models.BooleanField(default=True)
+ 
+    class Meta:
+        ordering = ["day_of_week", "start_time"]
+        verbose_name = "Disponibilité Médecin"
+ 
+    def __str__(self):
+        return f"{self.doctor} — {self.get_day_of_week_display()} {self.start_time}–{self.end_time}"
+ 
+ 
+# ─── 2. Préférences patient pour les rendez-vous ─────────────────────────────
+ 
+class PatientSchedulingPreferences(models.Model):
+    """
+    Préférences de planification d'un patient.
+    Un seul enregistrement par patient (OneToOne).
+    """
+    class TimeSlot(models.TextChoices):
+        MORNING   = "morning",   "Matin (8h–12h)"
+        AFTERNOON = "afternoon", "Après-midi (12h–17h)"
+        ANY       = "any",       "Indifférent"
+ 
+    patient = models.OneToOneField(
+        "Patient",
+        on_delete=models.CASCADE,
+        related_name="scheduling_preferences",
+    )
+    preferred_time_slot = models.CharField(
+        max_length=20,
+        choices=TimeSlot.choices,
+        default=TimeSlot.ANY,
+    )
+    # Jours préférés (JSON list d'entiers 0-6)
+    preferred_days = models.JSONField(default=list, blank=True)
+    # Médecin préféré
+    preferred_doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="preferred_by_patients",
+    )
+ 
+    class Meta:
+        verbose_name = "Préférences de Planification"
+ 
+    def __str__(self):
+        return f"Préférences RDV — {self.patient}"
+ 
+ 
+# ─── 3. Extension du modèle Appointment (champs additionnels) ────────────────
+ 
+class AppointmentExtension(models.Model):
+    """
+    Étend le modèle Appointment existant sans le modifier.
+    Relation OneToOne sur Appointment.
+    """
+    class AppointmentType(models.TextChoices):
+        SIMPLE   = "simple",   "Consultation simple (15 min)"
+        COMPLEX  = "complex",  "Consultation complexe (30 min)"
+        FOLLOWUP = "followup", "Suivi de traitement (45 min)"
+        URGENCY  = "urgency",  "Urgence"
+ 
+    class Priority(models.IntegerChoices):
+        URGENCY  = 1, "Urgence (P1)"
+        FOLLOWUP = 2, "Suivi (P2)"
+        ANNUAL   = 3, "Annuel (P3)"
+ 
+    appointment = models.OneToOneField(
+        "Appointment",
+        on_delete=models.CASCADE,
+        related_name="extension",
+    )
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="appointments_as_doctor",
+        limit_choices_to={"profile__role": "doctor"},
+    )
+    room = models.ForeignKey(
+        "Room",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="appointments",
+    )
+    machine = models.ForeignKey(
+        "Machine",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="appointments",
+    )
+    appointment_type  = models.CharField(max_length=20, choices=AppointmentType.choices, default=AppointmentType.SIMPLE)
+    duration_minutes  = models.PositiveSmallIntegerField(default=15)
+    priority          = models.IntegerField(choices=Priority.choices, default=Priority.FOLLOWUP)
+ 
+    # Scores de l'algorithme de planification
+    relevance_score = models.FloatField(null=True, blank=True)
+ 
+    # Confirmation patient
+    confirmation_token   = models.CharField(max_length=64, blank=True)
+    confirmation_deadline= models.DateTimeField(null=True, blank=True)
+    confirmed_at         = models.DateTimeField(null=True, blank=True)
+ 
+    # Rappels envoyés
+    reminder_7d_sent = models.BooleanField(default=False)
+    reminder_3d_sent = models.BooleanField(default=False)
+    reminder_1d_sent = models.BooleanField(default=False)
+ 
+    class Meta:
+        verbose_name = "Extension Rendez-vous"
+ 
+    def __str__(self):
+        return f"Ext. RDV #{self.appointment_id}"
+ 
+    def get_duration_from_type(self) -> int:
+        """Retourne la durée standard selon le type de RDV."""
+        durations = {"simple": 15, "complex": 30, "followup": 45, "urgency": 30}
+        return durations.get(self.appointment_type, 15)
+ 
+ 
+# ─── 4. Créneau proposé (résultat de l'algorithme) ───────────────────────────
+ 
+class SlotSuggestion(models.Model):
+    """
+    Stocke les 3 créneaux proposés par l'algorithme pour un patient.
+    Expire après 48h si non confirmé.
+    """
+    class SuggestionType(models.TextChoices):
+        CLOSEST    = "closest",    "Le plus proche"
+        BEST_MATCH = "best_match", "Le plus adapté aux préférences"
+        FLEXIBLE   = "flexible",   "Le plus flexible"
+ 
+    patient = models.ForeignKey(
+        "Patient",
+        on_delete=models.CASCADE,
+        related_name="slot_suggestions",
+    )
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="slot_suggestions",
+    )
+    room = models.ForeignKey(
+        "Room",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="slot_suggestions",
+    )
+    machine = models.ForeignKey(
+        "Machine",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="slot_suggestions",
+    )
+    suggestion_type  = models.CharField(max_length=20, choices=SuggestionType.choices)
+    proposed_date    = models.DateTimeField()
+    duration_minutes = models.PositiveSmallIntegerField(default=15)
+    relevance_score  = models.FloatField(default=0.0)
+ 
+    # Statut de la suggestion
+    is_accepted = models.BooleanField(default=False)
+    is_expired  = models.BooleanField(default=False)
+    expires_at  = models.DateTimeField()
+ 
+    # RDV créé si accepté
+    appointment = models.ForeignKey(
+        "Appointment",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="from_suggestions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    class Meta:
+        ordering = ["-relevance_score"]
+ 
+    def __str__(self):
+        return f"Suggestion {self.suggestion_type} — {self.patient} — {self.proposed_date:%Y-%m-%d %H:%M}"
+ 
+    @property
+    def is_valid(self) -> bool:
+        return not self.is_expired and timezone.now() < self.expires_at
+ 
+ 
+# ─── 5. Liste d'attente ───────────────────────────────────────────────────────
+ 
+class WaitingList(models.Model):
+    """
+    Patients en attente d'un créneau libéré suite à un désistement.
+    """
+    patient = models.ForeignKey(
+        "Patient",
+        on_delete=models.CASCADE,
+        related_name="waiting_list_entries",
+    )
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="waiting_list",
+    )
+    appointment_type  = models.CharField(max_length=20, default="simple")
+    priority          = models.IntegerField(default=2)
+    earliest_date     = models.DateField(null=True, blank=True)
+    latest_date       = models.DateField(null=True, blank=True)
+ 
+    # Réponse du patient à une proposition
+    proposed_slot     = models.DateTimeField(null=True, blank=True)
+    proposal_expires  = models.DateTimeField(null=True, blank=True)
+    proposal_accepted = models.BooleanField(null=True, blank=True)
+ 
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+ 
+    class Meta:
+        ordering = ["priority", "created_at"]
+        verbose_name = "Liste d'attente"
+ 
+    def __str__(self):
+        return f"Attente — {self.patient} (P{self.priority})"
+ 
+    @property
+    def proposal_still_valid(self) -> bool:
+        if not self.proposal_expires:
+            return False
+        return timezone.now() < self.proposal_expires
+
+# ─────────────────────────────────────────────────────────────────────────────
+# US-TRT-05 — Protocoles de Traitement
+# À coller à la fin de backend/apps/crm/models.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TreatmentProtocol(models.Model):
+    """
+    Référentiel de protocole de radiothérapie.
+    Workflow : draft → pending → approved → archived
+    Le champ TreatmentPlan.protocol (TextField) peut référencer le nom ou l'id.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT    = "draft",    "Brouillon"
+        PENDING  = "pending",  "En attente d'approbation"
+        APPROVED = "approved", "Approuvé"
+        ARCHIVED = "archived", "Archivé"
+
+    class RadiationType(models.TextChoices):
+        PHOTON        = "photon",        "Photons X"
+        ELECTRON      = "electron",      "Électrons"
+        PROTON        = "proton",        "Protons"
+        NEUTRON       = "neutron",       "Neutrons"
+        BRACHYTHERAPY = "brachytherapy", "Curiethérapie"
+
+    class FractionInterval(models.TextChoices):
+        DAILY       = "daily",       "Quotidien (5j/semaine)"
+        TWICE_DAILY = "twice_daily", "2× par jour"
+        WEEKLY      = "weekly",      "Hebdomadaire"
+        CUSTOM      = "custom",      "Personnalisé"
+
+    # Versioning — parent pointe sur la version précédente
+    parent  = models.ForeignKey(
+        "self",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="children",
+    )
+    version = models.PositiveSmallIntegerField(default=1)
+
+    # Identification médicale
+    name                   = models.CharField(max_length=200)
+    icd10_code             = models.CharField(max_length=20, blank=True)
+    icd10_label            = models.CharField(max_length=255, blank=True)
+    cancer_type            = models.CharField(max_length=150, blank=True)
+    international_reference = models.CharField(max_length=255, blank=True)
+
+    # Dosimétrie
+    radiation_type       = models.CharField(
+        max_length=20,
+        choices=RadiationType.choices,
+        default=RadiationType.PHOTON,
+    )
+    total_dose_gy        = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    dose_per_fraction_gy = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    number_of_fractions  = models.PositiveSmallIntegerField(default=0)
+    fraction_interval    = models.CharField(
+        max_length=20,
+        choices=FractionInterval.choices,
+        default=FractionInterval.DAILY,
+    )
+    total_duration_days  = models.PositiveSmallIntegerField(default=0)
+
+    # Instructions cliniques
+    description               = models.TextField(blank=True)
+    preparation_instructions  = models.TextField(blank=True)
+    contraindications         = models.TextField(blank=True)
+
+    # Workflow
+    status      = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+    created_by  = models.ForeignKey(
+        User, null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="protocols_created",
+    )
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="protocols_approved",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Protocole de traitement"
+        verbose_name_plural = "Protocoles de traitement"
+
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+
+    # ── Computed helpers ────────────────────────────────────────────────────
+
+    @property
+    def computed_total_dose(self) -> str:
+        """dose_per_fraction × number_of_fractions, arrondi 2 décimales."""
+        if self.dose_per_fraction_gy and self.number_of_fractions:
+            return f"{float(self.dose_per_fraction_gy) * self.number_of_fractions:.2f}"
+        return "0.00"
+
+    @property
+    def computed_duration_days(self) -> int:
+        """
+        Estimation durée selon intervalle et nombre de fractions.
+        daily       → fractions / 5 × 7 (week-ends exclus)
+        twice_daily → fractions / 10 × 7
+        weekly      → fractions × 7
+        custom      → total_duration_days déclaré
+        """
+        n = self.number_of_fractions or 0
+        if self.fraction_interval == self.FractionInterval.DAILY:
+            weeks = -(-n // 5)          # ceil division
+            return weeks * 7
+        if self.fraction_interval == self.FractionInterval.TWICE_DAILY:
+            weeks = -(-n // 10)
+            return weeks * 7
+        if self.fraction_interval == self.FractionInterval.WEEKLY:
+            return n * 7
+        return self.total_duration_days
+
+
+class ProtocolChangeLog(models.Model):
+    """
+    Trace chaque action sur un TreatmentProtocol :
+    created / submitted / approved / rejected / archived / cloned.
+    """
+    protocol      = models.ForeignKey(
+        TreatmentProtocol,
+        on_delete=models.CASCADE,
+        related_name="changelog",
+    )
+    action        = models.CharField(max_length=50)   # ex. "approved"
+    performed_by  = models.ForeignKey(
+        User, null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="protocol_actions",
+    )
+    changes       = models.JSONField(default=dict, blank=True)
+    comment       = models.TextField(blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Journal protocole"
+
+    def __str__(self):
+        return f"{self.action} — {self.protocol}"
+
+
+class DoseDeviation(models.Model):
+    """
+    Écart entre la dose prévue par le protocole et la dose réellement
+    délivrée sur une session. Créé automatiquement par le viewset
+    TreatmentSession quand abs(délivrée − attendue) > seuil.
+    """
+    class Severity(models.TextChoices):
+        LOW      = "low",      "Faible (< 5%)"
+        MODERATE = "moderate", "Modéré (5–10%)"
+        HIGH     = "high",     "Élevé (> 10%)"
+
+    session           = models.OneToOneField(
+        TreatmentSession,
+        on_delete=models.CASCADE,
+        related_name="dose_deviation",
+    )
+    protocol          = models.ForeignKey(
+        TreatmentProtocol,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="deviations",
+    )
+    expected_dose_gy  = models.DecimalField(max_digits=6, decimal_places=2)
+    delivered_dose_gy = models.DecimalField(max_digits=6, decimal_places=2)
+    deviation_pct     = models.DecimalField(max_digits=5, decimal_places=2)
+    severity          = models.CharField(
+        max_length=20,
+        choices=Severity.choices,
+        default=Severity.LOW,
+    )
+    notes             = models.TextField(blank=True)
+    reviewed          = models.BooleanField(default=False)
+    reviewed_by       = models.ForeignKey(
+        User, null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="deviations_reviewed",
+    )
+    reviewed_at       = models.DateTimeField(null=True, blank=True)
+    created_at        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Écart de dose"
+        verbose_name_plural = "Écarts de dose"
+
+    def __str__(self):
+        return f"Écart {self.deviation_pct}% — session #{self.session_id}"
+
+    @classmethod
+    def classify_severity(cls, pct: float) -> str:
+        pct = abs(pct)
+        if pct < 5:
+            return cls.Severity.LOW
+        if pct <= 10:
+            return cls.Severity.MODERATE
+        return cls.Severity.HIGH

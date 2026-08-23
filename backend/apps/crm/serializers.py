@@ -1,9 +1,29 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-
 from .models import (
-    Appointment, Complaint, Machine, Patient, Room, Ticket,
-    TreatmentPlan, TreatmentSession, Incident, TicketComment
+    Patient,
+    Appointment,
+    TreatmentPlan,
+    TreatmentSession,
+    Ticket,
+    Complaint,
+    Incident,
+    Machine,
+    Room,
+    TicketComment,
+    PatientPortalAccount,
+    PatientRating,
+    PortalMessage,
+    AppointmentExtension,
+    DoctorAvailability,
+    PatientSchedulingPreferences,
+    SlotSuggestion,
+    WaitingList,
+    PatientDocument,
+    TreatmentProtocol,
+    ProtocolChangeLog,
+    DoseDeviation,
+    MaintenanceLog,
 )
 
 
@@ -48,19 +68,55 @@ class AppointmentSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "patient_name", "created_at", "updated_at"]
 
 
+class MaintenanceLogSerializer(serializers.ModelSerializer):
+    duration_hours = serializers.ReadOnlyField()
+    machine_name   = serializers.CharField(source="machine.name", read_only=True)
+
+    class Meta:
+        model = MaintenanceLog
+        fields = [
+            "id", "machine", "machine_name",
+            "intervention_type", "start_datetime", "end_datetime",
+            "technician", "description", "result", "cost",
+            "next_service_date", "notes", "duration_hours",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "duration_hours", "created_at", "updated_at"]
+
+
 class MachineSerializer(serializers.ModelSerializer):
+    disponibilite      = serializers.ReadOnlyField()
+    annual_depreciation = serializers.ReadOnlyField()
+    book_value         = serializers.ReadOnlyField()
+    calibration_overdue = serializers.ReadOnlyField()
+    recent_logs        = serializers.SerializerMethodField()
+
     class Meta:
         model = Machine
         fields = [
-            "id",
-            "name",
-            "model",
-            "status",
-            "notes",
-            "created_at",
-            "updated_at",
+            "id", "name", "model", "serial_number", "manufacturer",
+            "status", "location",
+            # Lifecycle
+            "purchase_date", "purchase_cost", "useful_life_years", "residual_value",
+            # Calibration
+            "last_calibration_date", "next_calibration_date", "calibration_interval_days",
+            # Reliability
+            "mtbf_hours", "mttr_hours",
+            # Computed
+            "disponibilite", "annual_depreciation", "book_value", "calibration_overdue",
+            # Logs preview
+            "recent_logs",
+            "notes", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "mtbf_hours", "mttr_hours",
+            "disponibilite", "annual_depreciation", "book_value", "calibration_overdue",
+            "created_at", "updated_at",
+        ]
+
+    def get_recent_logs(self, obj):
+        logs = obj.maintenance_logs.all()[:5]
+        return MaintenanceLogSerializer(logs, many=True).data
 
 
 class RoomSerializer(serializers.ModelSerializer):
@@ -82,6 +138,9 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
     cumulative_dose = serializers.SerializerMethodField()
     sessions_completed = serializers.SerializerMethodField()
     dose_percentage = serializers.SerializerMethodField()
+    # Add these as computed fields
+    number_of_sessions = serializers.SerializerMethodField()
+    frequency = serializers.SerializerMethodField()
 
     class Meta:
         model = TreatmentPlan
@@ -94,8 +153,9 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
             "protocol",
             "total_dose",
             "dose_per_session",
-            "number_of_sessions",
-            "frequency",
+            "total_sessions",  # This is the actual model field
+            "number_of_sessions",  # Computed from total_sessions
+            "frequency",  # Computed
             "start_date",
             "end_date",
             "status",
@@ -112,6 +172,8 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
             "cumulative_dose",
             "sessions_completed",
             "dose_percentage",
+            "number_of_sessions",
+            "frequency",
             "created_at",
             "updated_at",
         ]
@@ -133,6 +195,31 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
             return 0.0
         cumulative = self.get_cumulative_dose(obj)
         return round((cumulative / float(obj.total_dose)) * 100, 1)
+
+    def get_number_of_sessions(self, obj):
+        """Return the total number of sessions (alias for total_sessions)."""
+        return obj.total_sessions
+
+    def get_frequency(self, obj):
+        """Calculate frequency based on session schedule."""
+        # Default frequency if not specified
+        if hasattr(obj, 'sessions') and obj.sessions.exists():
+            # Check if sessions are daily or weekly
+            first_session = obj.sessions.order_by('scheduled_datetime').first()
+            if first_session:
+                # Try to determine frequency from session dates
+                sessions = obj.sessions.order_by('scheduled_datetime')[:5]
+                if sessions.count() > 1:
+                    # Check if sessions are on consecutive days
+                    from django.utils import timezone
+                    date_diff = (sessions[1].scheduled_datetime.date() - sessions[0].scheduled_datetime.date()).days
+                    if date_diff == 1:
+                        return "Quotidienne"
+                    elif date_diff == 7:
+                        return "Hebdomadaire"
+                    elif date_diff == 14:
+                        return "Bi-hebdomadaire"
+        return "Standard"  # Default
 
 
 class TreatmentSessionSerializer(serializers.ModelSerializer):
@@ -273,8 +360,8 @@ class PublicTicketStatusSerializer(serializers.Serializer):
 
 
 class IncidentSerializer(serializers.ModelSerializer):
-    patient_name = serializers.CharField(source="patient.__str__", read_only=True)
-    reported_by_name = serializers.CharField(source="reported_by.get_full_name", read_only=True)
+    patient_name = serializers.CharField(source="patient.__str__", read_only=True, default=None)
+    reported_by_name = serializers.CharField(source="reported_by.get_full_name", read_only=True, default=None)
     agents = serializers.PrimaryKeyRelatedField(
         many=True, queryset=User.objects.all(), required=False
     )
@@ -356,3 +443,489 @@ class TicketCommentSerializer(serializers.ModelSerializer):
             return "Unknown"
         full = obj.author.get_full_name()
         return full or obj.author.username
+ 
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+ 
+class PortalLoginSerializer(serializers.Serializer):
+    last_name = serializers.CharField()
+    cin = serializers.CharField()
+    medical_record_number = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+ 
+ 
+class PortalRegisterSerializer(serializers.Serializer):
+    """Création du compte portail par le staff (secrétaire/admin)."""
+    patient_id = serializers.IntegerField()
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=8)
+ 
+    def validate_patient_id(self, value):
+        try:
+            return Patient.objects.get(pk=value)
+        except Patient.DoesNotExist:
+            raise serializers.ValidationError("Patient introuvable.")
+ 
+    def validate_email(self, value):
+        if PatientPortalAccount.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Cet email est déjà utilisé.")
+        return value
+ 
+    def create(self, validated_data):
+        patient = validated_data["patient_id"]  # already a Patient instance
+        account = PatientPortalAccount(
+            patient=patient,
+            email=validated_data["email"],
+        )
+        account.set_password(validated_data["password"])
+        account.save()
+        return account
+ 
+ 
+class PortalPasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+ 
+    def validate(self, data):
+        if data["new_password"] != data["confirm_password"]:
+            raise serializers.ValidationError("Les mots de passe ne correspondent pas.")
+        return data
+ 
+ 
+class PortalPasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+ 
+ 
+class PortalPasswordResetConfirmSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+ 
+ 
+# ─── Patient Profile ──────────────────────────────────────────────────────────
+ 
+class PortalPatientProfileSerializer(serializers.ModelSerializer):
+    """Lecture + mise à jour des coordonnées du patient depuis le portail."""
+
+    date_of_birth = serializers.DateField(source="birth_date", allow_null=True, required=False)
+    class Meta:
+        model = Patient
+        fields = [
+            "id", "first_name", "last_name", "email", "phone",
+            "address", "date_of_birth", "medical_record_number",
+        ]
+        read_only_fields = ["id", "medical_record_number", "date_of_birth"]
+ 
+ 
+class PortalAccountSerializer(serializers.ModelSerializer):
+    """Préférences du compte portail."""
+    class Meta:
+        model = PatientPortalAccount
+        fields = ["email", "notify_email", "notify_sms", "last_login", "is_active"]
+        read_only_fields = ["email", "last_login", "is_active"]
+ 
+ 
+# ─── Appointments ─────────────────────────────────────────────────────────────
+ 
+class PortalAppointmentSerializer(serializers.ModelSerializer):
+    date = serializers.DateTimeField(source="appointment_date", read_only=True)
+    type = serializers.SerializerMethodField()
+    duration_minutes = serializers.SerializerMethodField()
+    doctor_name = serializers.SerializerMethodField()
+    room_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = Appointment
+        fields = [
+            "id", "date", "status", "type", "duration_minutes",
+            "doctor_name", "room_name", "notes",
+        ]
+ 
+    def _extension(self, obj):
+        try:
+            return obj.extension
+        except AppointmentExtension.DoesNotExist:
+            return None
+
+    def get_type(self, obj):
+        extension = self._extension(obj)
+        return extension.appointment_type if extension else obj.title
+
+    def get_duration_minutes(self, obj):
+        extension = self._extension(obj)
+        return extension.duration_minutes if extension else None
+
+    def get_doctor_name(self, obj):
+        extension = self._extension(obj)
+        if extension and extension.doctor:
+            return f"{extension.doctor.first_name} {extension.doctor.last_name}".strip() or extension.doctor.username
+        return None
+ 
+    def get_room_name(self, obj):
+        extension = self._extension(obj)
+        if extension and extension.room:
+            return extension.room.name
+        return None
+ 
+ 
+# ─── Treatment Plans & Sessions ───────────────────────────────────────────────
+ 
+class PortalTreatmentSessionSerializer(serializers.ModelSerializer):
+    scheduled_date = serializers.DateTimeField(source="scheduled_datetime", read_only=True)
+    dose_delivered_gy = serializers.DecimalField(
+        source="dose_delivered",
+        max_digits=6,
+        decimal_places=2,
+        read_only=True,
+    )
+    machine_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = TreatmentSession
+        fields = [
+            "id", "session_number", "scheduled_date", "status",
+            "dose_delivered_gy", "machine_name", "notes",
+        ]
+ 
+    def get_machine_name(self, obj):
+        if obj.machine:
+            return obj.machine.name
+        return None
+ 
+ 
+class PortalTreatmentPlanSerializer(serializers.ModelSerializer):
+    sessions = PortalTreatmentSessionSerializer(many=True, read_only=True)
+    total_dose_gy = serializers.DecimalField(
+        source="total_dose",
+        max_digits=7,
+        decimal_places=2,
+        read_only=True,
+    )
+    number_of_fractions = serializers.IntegerField(source="total_sessions", read_only=True)
+    progress_pct = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = TreatmentPlan
+        fields = [
+            "id", "diagnosis", "status", "total_dose_gy",
+            "number_of_fractions", "start_date", "end_date",
+            "sessions", "progress_pct",
+        ]
+ 
+    def get_progress_pct(self, obj):
+        total = obj.total_sessions or 0
+        if total == 0:
+            return 0
+        done = obj.sessions.filter(status="completed").count()
+        return round((done / total) * 100)
+ 
+ 
+# ─── Messages ─────────────────────────────────────────────────────────────────
+ 
+class PortalMessageSerializer(serializers.ModelSerializer):
+    sender_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = PortalMessage
+        fields = [
+            "id", "direction", "subject", "content",
+            "is_read", "read_at", "created_at", "sender_name",
+        ]
+        read_only_fields = ["id", "direction", "is_read", "read_at", "created_at", "sender_name"]
+ 
+    def get_sender_name(self, obj):
+        if obj.direction == PortalMessage.Direction.STAFF_TO_PATIENT and obj.staff_author:
+            return f"{obj.staff_author.first_name} {obj.staff_author.last_name}".strip() or obj.staff_author.username
+        return "Vous"
+ 
+ 
+class PortalMessageCreateSerializer(serializers.Serializer):
+    """Patient envoie un message vers le staff."""
+    subject = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    content = serializers.CharField(min_length=5)
+ 
+ 
+class StaffReplySerializer(serializers.Serializer):
+    """Staff répond à un patient via le portail (vue interne)."""
+    patient_id = serializers.IntegerField()
+    subject = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    content = serializers.CharField(min_length=1)
+ 
+ 
+# ─── Ratings ─────────────────────────────────────────────────────────────────
+ 
+class PortalRatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientRating
+        fields = ["id", "score", "comment", "treatment_session", "created_at"]
+        read_only_fields = ["id", "created_at"]
+ 
+    def validate_score(self, value):
+        if not (1 <= value <= 5):
+            raise serializers.ValidationError("Le score doit être entre 1 et 5.")
+        return value
+ 
+ 
+# ─── Documents ────────────────────────────────────────────────────────────────
+ 
+class PatientDocumentSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = PatientDocument
+        fields = [
+            "id", "document_type", "title", "file_path",
+            "file_size_kb", "uploaded_by_name", "created_at",
+        ]
+ 
+    def get_uploaded_by_name(self, obj):
+        if obj.uploaded_by:
+            return f"{obj.uploaded_by.first_name} {obj.uploaded_by.last_name}".strip() or obj.uploaded_by.username
+        return None
+ 
+ 
+# ─── Dashboard Summary ────────────────────────────────────────────────────────
+ 
+class PortalDashboardSerializer(serializers.Serializer):
+    """Agrégat pour le widget de tableau de bord patient."""
+    patient = PortalPatientProfileSerializer()
+    upcoming_appointments = PortalAppointmentSerializer(many=True)
+    active_treatment = PortalTreatmentPlanSerializer(allow_null=True)
+    unread_messages = serializers.IntegerField()
+    unpaid_invoices_count = serializers.IntegerField()
+    unpaid_invoices_total = serializers.DecimalField(max_digits=10, decimal_places=3)
+    
+class DoctorAvailabilitySerializer(serializers.ModelSerializer):
+    doctor_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = DoctorAvailability
+        fields = ["id", "doctor", "doctor_name", "day_of_week", "start_time", "end_time", "is_active"]
+ 
+    def get_doctor_name(self, obj):
+        return f"{obj.doctor.first_name} {obj.doctor.last_name}".strip() or obj.doctor.username
+ 
+ 
+class PatientPreferencesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientSchedulingPreferences
+        fields = ["id", "patient", "preferred_time_slot", "preferred_days", "preferred_doctor"]
+ 
+ 
+class AppointmentExtensionSerializer(serializers.ModelSerializer):
+    doctor_name  = serializers.SerializerMethodField()
+    room_name    = serializers.SerializerMethodField()
+    machine_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = AppointmentExtension
+        fields = [
+            "id", "appointment", "doctor", "doctor_name",
+            "room", "room_name", "machine", "machine_name",
+            "appointment_type", "duration_minutes", "priority",
+            "relevance_score", "confirmation_deadline", "confirmed_at",
+            "reminder_7d_sent", "reminder_3d_sent", "reminder_1d_sent",
+        ]
+        read_only_fields = ["confirmed_at", "reminder_7d_sent", "reminder_3d_sent", "reminder_1d_sent"]
+ 
+    def get_doctor_name(self, obj):
+        if obj.doctor:
+            return f"{obj.doctor.first_name} {obj.doctor.last_name}".strip() or obj.doctor.username
+        return None
+ 
+    def get_room_name(self, obj):
+        return obj.room.name if obj.room else None
+ 
+    def get_machine_name(self, obj):
+        return obj.machine.name if obj.machine else None
+ 
+ 
+class SlotSuggestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SlotSuggestion
+        fields = [
+            "id", "suggestion_type", "proposed_date", "duration_minutes",
+            "relevance_score", "is_accepted", "is_expired", "expires_at",
+        ]
+ 
+ 
+class WaitingListSerializer(serializers.ModelSerializer):
+    patient_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = WaitingList
+        fields = [
+            "id", "patient", "patient_name", "doctor", "appointment_type",
+            "priority", "earliest_date", "latest_date",
+            "proposed_slot", "proposal_expires", "proposal_accepted",
+            "is_active", "created_at",
+        ]
+ 
+    def get_patient_name(self, obj):
+        return f"{obj.patient.first_name} {obj.patient.last_name}".strip()
+ 
+ 
+# ─── Request serializers ──────────────────────────────────────────────────────
+ 
+class SmartSuggestRequestSerializer(serializers.Serializer):
+    patient_id       = serializers.IntegerField()
+    doctor_id        = serializers.IntegerField()
+    appointment_type = serializers.ChoiceField(
+        choices=["simple", "complex", "followup", "urgency"],
+        default="simple",
+    )
+    priority         = serializers.ChoiceField(choices=[1, 2, 3], default=2)
+    target_date      = serializers.DateTimeField(required=False, allow_null=True)
+ 
+ 
+class SmartBookRequestSerializer(serializers.Serializer):
+    patient_id       = serializers.IntegerField()
+    doctor_id        = serializers.IntegerField()
+    slot_datetime    = serializers.DateTimeField()
+    appointment_type = serializers.ChoiceField(
+        choices=["simple", "complex", "followup", "urgency"],
+        default="simple",
+    )
+    priority         = serializers.ChoiceField(choices=[1, 2, 3], default=2)
+    room_id          = serializers.IntegerField(required=False, allow_null=True)
+    machine_id       = serializers.IntegerField(required=False, allow_null=True)
+    reason           = serializers.CharField(required=False, allow_blank=True, default="")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# US-TRT-05 — Protocoles de Traitement : sérialiseurs
+# À coller à la fin de backend/apps/crm/serializers.py
+# ET ajouter dans l'import models en tête de fichier :
+#   TreatmentProtocol, ProtocolChangeLog, DoseDeviation,
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ProtocolChangeLogSerializer(serializers.ModelSerializer):
+    performed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = ProtocolChangeLog
+        fields = [
+            "id", "action", "performed_by_name",
+            "changes", "comment", "created_at",
+        ]
+
+    def get_performed_by_name(self, obj):
+        if obj.performed_by:
+            return f"{obj.performed_by.first_name} {obj.performed_by.last_name}".strip() \
+                   or obj.performed_by.username
+        return None
+
+
+class TreatmentProtocolSerializer(serializers.ModelSerializer):
+    created_by_name  = serializers.SerializerMethodField()
+    approved_by_name = serializers.SerializerMethodField()
+    changelog        = ProtocolChangeLogSerializer(many=True, read_only=True)
+    versions_count   = serializers.SerializerMethodField()
+    computed_total_dose   = serializers.CharField(read_only=True)
+    computed_duration_days = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model  = TreatmentProtocol
+        fields = [
+            "id", "name", "version", "parent",
+            "icd10_code", "icd10_label", "cancer_type",
+            "radiation_type", "total_dose_gy", "dose_per_fraction_gy",
+            "number_of_fractions", "fraction_interval", "total_duration_days",
+            "international_reference", "description",
+            "preparation_instructions", "contraindications",
+            "status",
+            "created_by", "created_by_name",
+            "approved_by", "approved_by_name", "approved_at",
+            "created_at", "updated_at",
+            "computed_total_dose", "computed_duration_days",
+            "changelog", "versions_count",
+        ]
+        read_only_fields = [
+            "version", "status", "approved_by", "approved_at",
+            "created_at", "updated_at",
+        ]
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip() \
+                   or obj.created_by.username
+        return None
+
+    def get_approved_by_name(self, obj):
+        if obj.approved_by:
+            return f"{obj.approved_by.first_name} {obj.approved_by.last_name}".strip() \
+                   or obj.approved_by.username
+        return None
+
+    def get_versions_count(self, obj):
+        """Remonte jusqu'à la racine et compte toutes les versions."""
+        root = obj
+        while root.parent_id:
+            root = root.parent
+        def _count(node):
+            return 1 + sum(_count(c) for c in node.children.all())
+        return _count(root)
+
+
+class TreatmentProtocolListSerializer(serializers.ModelSerializer):
+    """Version allégée pour le listing (sans changelog)."""
+    created_by_name  = serializers.SerializerMethodField()
+    approved_by_name = serializers.SerializerMethodField()
+    computed_total_dose = serializers.CharField(read_only=True)
+
+    class Meta:
+        model  = TreatmentProtocol
+        fields = [
+            "id", "name", "version", "parent",
+            "icd10_code", "icd10_label", "cancer_type",
+            "radiation_type", "total_dose_gy", "dose_per_fraction_gy",
+            "number_of_fractions", "fraction_interval",
+            "status",
+            "created_by_name", "approved_by_name", "approved_at",
+            "created_at", "computed_total_dose",
+        ]
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip() \
+                   or obj.created_by.username
+        return None
+
+    def get_approved_by_name(self, obj):
+        if obj.approved_by:
+            return f"{obj.approved_by.first_name} {obj.approved_by.last_name}".strip() \
+                   or obj.approved_by.username
+        return None
+
+
+class DoseDeviationSerializer(serializers.ModelSerializer):
+    reviewed_by_name = serializers.SerializerMethodField()
+    session_info     = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = DoseDeviation
+        fields = [
+            "id", "session", "session_info",
+            "protocol",
+            "expected_dose_gy", "delivered_dose_gy", "deviation_pct",
+            "severity", "notes",
+            "reviewed", "reviewed_by", "reviewed_by_name", "reviewed_at",
+            "created_at",
+        ]
+        read_only_fields = [
+            "deviation_pct", "severity", "created_at",
+        ]
+
+    def get_reviewed_by_name(self, obj):
+        if obj.reviewed_by:
+            return f"{obj.reviewed_by.first_name} {obj.reviewed_by.last_name}".strip() \
+                   or obj.reviewed_by.username
+        return None
+
+    def get_session_info(self, obj):
+        s = obj.session
+        return {
+            "id": s.id,
+            "session_number": s.session_number,
+            "patient_name": f"{s.patient.first_name} {s.patient.last_name}".strip(),
+            "scheduled_datetime": s.scheduled_datetime.isoformat(),
+        }

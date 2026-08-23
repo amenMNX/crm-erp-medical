@@ -1,3 +1,4 @@
+// domain.ts - Add these missing types
 export type UserRole =
   | "admin"
   | "doctor"
@@ -25,6 +26,28 @@ export const roleLabels: Record<UserRole, string> = {
 
 export type TicketPriority = "Faible" | "Moyenne" | "Élevée" | "Critique";
 export type TicketStatus = "Nouveau" | "En cours" | "En attente" | "Résolu" | "Fermé";
+
+// Add these types for patients and agents
+export type Patient = {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email?: string;
+  phone?: string;
+  date_naissance?: string;
+  adresse?: string;
+  num_securite_sociale?: string;
+};
+
+export type Agent = {
+  id: number;
+  name: string;
+  email?: string;
+  role?: UserRole;
+  first_name?: string;
+  last_name?: string;
+  matricule?: string;
+};
 
 export type Ticket = {
   id: number;

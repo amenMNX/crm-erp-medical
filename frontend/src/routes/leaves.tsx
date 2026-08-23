@@ -1,7 +1,8 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Plus, Search, X } from "lucide-react";
+import { CalendarDays, Check, Loader2, Plus, Search, X } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -22,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -40,139 +43,260 @@ import {
 import { fetchEmployees } from "@/lib/employees-api";
 
 export const Route = createFileRoute("/leaves")({
+  head: () => ({
+    meta: [{ title: "Congés — Base" }],
+  }),
   component: LeavesPage,
 });
 
-const statuses: LeaveStatus[] = ["En attente", "Acceptée", "Refusée"];
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const STATUS_LABELS: Record<LeaveStatus, string> = {
+  "En attente": "En attente",
+  "Acceptée": "Acceptée",
+  "Refusée": "Refusée",
+};
 
 function statusClass(status: LeaveStatus) {
-  if (status === "Acceptée") return "bg-success/15 text-success border-0";
-  if (status === "Refusée") return "bg-destructive/15 text-destructive border-0";
+  if (status === "Acceptée")  return "bg-success/15 text-success border-0";
+  if (status === "Refusée")   return "bg-destructive/15 text-destructive border-0";
   return "bg-warning/15 text-warning border-0";
 }
 
-function LeavesPage() {
-  const queryClient = useQueryClient();
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+function formatDays(value: string | number | null | undefined) {
+  return Number(value ?? 0).toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+}
+
+function formatDate(iso: string) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+// ── Dialoge de création ───────────────────────────────────────────────────────
+
+function NewLeaveDialog() {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    employee: "",
+    date_debut: "",
+    date_fin: "",
+    motif: "",
+    notes: "",
+  });
 
-  const leavesQuery = useQuery({ queryKey: ["leaves"], queryFn: fetchLeaveRequests });
   const employeesQuery = useQuery({ queryKey: ["employees"], queryFn: fetchEmployees });
-
-  const leaves = leavesQuery.data ?? [];
   const employees = employeesQuery.data ?? [];
 
-  const createMutation = useMutation({
+  const mutation = useMutation({
     mutationFn: createLeaveRequest,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["leaves"] });
+      qc.invalidateQueries({ queryKey: ["leaves"] });
+      toast.success("Demande de congé soumise.");
       setOpen(false);
-      setFormError(null);
+      setForm({ employee: "", date_debut: "", date_fin: "", motif: "", notes: "" });
     },
-    onError: () => setFormError("Failed to submit leave request."),
+    onError: () => toast.error("Impossible de soumettre la demande."),
   });
 
-  const approveMutation = useMutation({
+  const valid =
+    !!form.employee && !!form.date_debut && !!form.date_fin && !!form.motif &&
+    form.date_fin >= form.date_debut;
+
+  function handleSubmit() {
+    if (!valid) return;
+    mutation.mutate({
+      employee: Number(form.employee),
+      date_debut: form.date_debut,
+      date_fin: form.date_fin,
+      motif: form.motif,
+      notes: form.notes,
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm">
+          <Plus className="h-4 w-4 mr-2" />
+          Nouvelle demande
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Demande de congé</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          <div className="space-y-1">
+            <Label>Employé *</Label>
+            <Select value={form.employee} onValueChange={(v) => setForm((f) => ({ ...f, employee: v }))}>
+              <SelectTrigger>
+                <SelectValue placeholder="Sélectionner un employé…" />
+              </SelectTrigger>
+              <SelectContent>
+                {employees.map((emp) => (
+                  <SelectItem key={emp.id} value={String(emp.id)}>
+                    {emp.first_name} {emp.last_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Date de début *</Label>
+              <Input
+                type="date"
+                value={form.date_debut}
+                onChange={(e) => setForm((f) => ({ ...f, date_debut: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Date de fin *</Label>
+              <Input
+                type="date"
+                value={form.date_fin}
+                min={form.date_debut || undefined}
+                onChange={(e) => setForm((f) => ({ ...f, date_fin: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label>Motif *</Label>
+            <Input
+              value={form.motif}
+              onChange={(e) => setForm((f) => ({ ...f, motif: e.target.value }))}
+              placeholder="Congé annuel, congé maladie…"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label>Notes <span className="text-muted-foreground text-xs">(optionnel)</span></Label>
+            <Textarea
+              rows={2}
+              value={form.notes}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              placeholder="Informations complémentaires…"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Annuler
+          </Button>
+          <Button onClick={handleSubmit} disabled={!valid || mutation.isPending}>
+            {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            Soumettre
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Page principale ───────────────────────────────────────────────────────────
+
+const ALL_STATUSES: LeaveStatus[] = ["En attente", "Acceptée", "Refusée"];
+
+function LeavesPage() {
+  const qc = useQueryClient();
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | LeaveStatus>("all");
+
+  const leavesQuery   = useQuery({ queryKey: ["leaves"],    queryFn: fetchLeaveRequests });
+  const employeesQuery = useQuery({ queryKey: ["employees"], queryFn: fetchEmployees });
+
+  const leaves    = leavesQuery.data    ?? [];
+  const employees = employeesQuery.data ?? [];
+
+  const approveMut = useMutation({
     mutationFn: approveLeaveRequest,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["leaves"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["leaves"] });
+      toast.success("Congé approuvé.");
+    },
+    onError: () => toast.error("Impossible d'approuver."),
   });
 
-  const rejectMutation = useMutation({
+  const rejectMut = useMutation({
     mutationFn: rejectLeaveRequest,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["leaves"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["leaves"] });
+      toast.success("Congé refusé.");
+    },
+    onError: () => toast.error("Impossible de refuser."),
   });
 
-  const filteredLeaves = useMemo(() => {
+  // ── Statistiques résumées ──────────────────────────────────────────────────
+  const acceptedLeaves = leaves.filter((l) => l.statut === "Acceptée");
+  const pendingLeaves  = leaves.filter((l) => l.statut === "En attente");
+  const acceptedDays   = acceptedLeaves.reduce((s, l) => s + Number(l.duration_days ?? 0), 0);
+  const totalRemaining = employees.reduce((s, e) => s + Number(e.leave_days_remaining ?? 0), 0);
+
+  // ── Filtrage ───────────────────────────────────────────────────────────────
+  const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return leaves.filter((leave) => {
-      const matchesQuery =
+    return leaves.filter((l) => {
+      const matchText =
         !q ||
-        leave.employee_name.toLowerCase().includes(q) ||
-        leave.motif.toLowerCase().includes(q);
-      const matchesStatus = statusFilter === "all" || leave.statut === statusFilter;
-      return matchesQuery && matchesStatus;
+        l.employee_name.toLowerCase().includes(q) ||
+        l.motif.toLowerCase().includes(q);
+      const matchStatus = statusFilter === "all" || l.statut === statusFilter;
+      return matchText && matchStatus;
     });
   }, [leaves, query, statusFilter]);
 
-  function addLeave(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError(null);
-
-    const formData = new FormData(event.currentTarget);
-    const employee = Number(formData.get("employee"));
-    const dateDebut = String(formData.get("dateDebut") ?? "");
-    const dateFin = String(formData.get("dateFin") ?? "");
-    const motif = String(formData.get("motif") ?? "").trim();
-
-    if (!employee || !dateDebut || !dateFin || !motif) {
-      setFormError("Employee, dates, and reason are required.");
-      return;
-    }
-
-    createMutation.mutate({ employee, date_debut: dateDebut, date_fin: dateFin, motif });
-  }
-
   const isLoading = leavesQuery.isLoading || employeesQuery.isLoading;
-  const loadError = leavesQuery.error || employeesQuery.error;
+  const hasError  = leavesQuery.isError   || employeesQuery.isError;
 
   return (
-    <AppShell
-      title="Leaves"
-      actions={
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4" /> Add Leave
-            </Button>
-          </DialogTrigger>
-
-          <DialogContent>
-            <form onSubmit={addLeave} className="space-y-5">
-              <DialogHeader>
-                <DialogTitle>Submit leave request</DialogTitle>
-              </DialogHeader>
-
-              {formError && (
-                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {formError}
-                </div>
-              )}
-
-              <Select name="employee" required>
-                <SelectTrigger>
-                  <SelectValue placeholder="Employee" />
-                </SelectTrigger>
-                <SelectContent>
-                  {employees.map((emp) => (
-                    <SelectItem key={emp.id} value={String(emp.id)}>
-                      {emp.first_name} {emp.last_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Input name="motif" placeholder="Reason" required />
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Input name="dateDebut" type="date" required />
-                <Input name="dateFin" type="date" required />
+    <AppShell title="Congés" actions={<NewLeaveDialog />}>
+      {/* ── Cartes résumé ── */}
+      <div className="grid gap-4 sm:grid-cols-3 mb-6">
+        {[
+          {
+            icon: <CalendarDays className="h-5 w-5" />,
+            label: "Congés approuvés",
+            value: acceptedLeaves.length,
+            color: "bg-success/10 text-success",
+          },
+          {
+            icon: <CalendarDays className="h-5 w-5" />,
+            label: "Jours pris (acceptés)",
+            value: `${formatDays(acceptedDays)} j`,
+            color: "bg-primary/10 text-primary",
+          },
+          {
+            icon: <CalendarDays className="h-5 w-5" />,
+            label: "Crédit restant (total)",
+            value: `${formatDays(totalRemaining)} j`,
+            color: "bg-warning/10 text-warning",
+          },
+        ].map((s) => (
+          <Card key={s.label}>
+            <CardContent className="flex items-center gap-3 p-4">
+              <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${s.color}`}>
+                {s.icon}
               </div>
+              <div>
+                <p className="text-sm text-muted-foreground">{s.label}</p>
+                <p className="text-2xl font-semibold">{s.value}</p>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Submitting..." : "Submit"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      }
-    >
+      {/* ── Filtres ── */}
       <Card>
         <CardContent className="space-y-4 p-4">
           <div className="grid gap-3 md:grid-cols-[1fr_200px]">
@@ -181,91 +305,112 @@ function LeavesPage() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search leave request..."
+                placeholder="Rechercher par employé ou motif…"
                 className="pl-9"
               />
             </div>
-
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
               <SelectTrigger>
-                <SelectValue placeholder="Status" />
+                <SelectValue placeholder="Statut" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                {statuses.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
+                <SelectItem value="all">Tous les statuts</SelectItem>
+                {ALL_STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
+          {/* ── Indicateur en attente ── */}
+          {pendingLeaves.length > 0 && (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+              {pendingLeaves.length} demande{pendingLeaves.length > 1 ? "s" : ""} en attente de décision.
+            </div>
+          )}
+
+          {/* ── États chargement / erreur ── */}
           {isLoading && (
             <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading leave requests...
+              <Loader2 className="h-4 w-4 animate-spin" /> Chargement des congés…
             </div>
           )}
 
-          {!isLoading && loadError && (
+          {!isLoading && hasError && (
             <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              Couldn't load leave requests. Please refresh the page.
+              Impossible de charger les données. Veuillez actualiser la page.
             </div>
           )}
 
-          {!isLoading && !loadError && (
+          {/* ── Tableau ── */}
+          {!isLoading && !hasError && (
             <div className="overflow-hidden rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Employee</TableHead>
-                    <TableHead>Start</TableHead>
-                    <TableHead>End</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-32">Decision</TableHead>
+                    <TableHead>Employé</TableHead>
+                    <TableHead>Début</TableHead>
+                    <TableHead>Fin</TableHead>
+                    <TableHead className="text-right">Durée</TableHead>
+                    <TableHead>Motif</TableHead>
+                    <TableHead className="text-right">Crédit restant</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead className="w-24 text-center">Action</TableHead>
                   </TableRow>
                 </TableHeader>
-
                 <TableBody>
-                  {filteredLeaves.map((leave) => (
+                  {filtered.map((leave) => (
                     <TableRow key={leave.id}>
                       <TableCell className="font-medium">{leave.employee_name}</TableCell>
-                      <TableCell>{leave.date_debut}</TableCell>
-                      <TableCell>{leave.date_fin}</TableCell>
-                      <TableCell>{leave.motif}</TableCell>
-                      <TableCell>
-                        <Badge className={statusClass(leave.statut)}>{leave.statut}</Badge>
+                      <TableCell className="text-sm">{formatDate(leave.date_debut)}</TableCell>
+                      <TableCell className="text-sm">{formatDate(leave.date_fin)}</TableCell>
+                      <TableCell className="text-right text-sm">
+                        {formatDays(leave.duration_days)} j
+                      </TableCell>
+                      <TableCell className="max-w-[180px] truncate text-sm" title={leave.motif}>
+                        {leave.motif}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {formatDays(leave.employee_leave_days_remaining)} j
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            disabled={approveMutation.isPending}
-                            onClick={() => approveMutation.mutate(leave.id)}
-                            aria-label="Accept leave"
-                          >
-                            <Check className="h-4 w-4 text-success" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            disabled={rejectMutation.isPending}
-                            onClick={() => rejectMutation.mutate(leave.id)}
-                            aria-label="Reject leave"
-                          >
-                            <X className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
+                        <Badge className={statusClass(leave.statut)}>
+                          {STATUS_LABELS[leave.statut]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {leave.statut === "En attente" ? (
+                          <div className="flex justify-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={approveMut.isPending}
+                              onClick={() => approveMut.mutate(leave.id)}
+                              title="Approuver"
+                            >
+                              <Check className="h-4 w-4 text-success" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={rejectMut.isPending}
+                              onClick={() => rejectMut.mutate(leave.id)}
+                              title="Refuser"
+                            >
+                              <X className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <p className="text-center text-xs text-muted-foreground">—</p>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
 
-                  {filteredLeaves.length === 0 && (
+                  {filtered.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                        No leave requests found.
+                      <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                        Aucune demande de congé trouvée.
                       </TableCell>
                     </TableRow>
                   )}

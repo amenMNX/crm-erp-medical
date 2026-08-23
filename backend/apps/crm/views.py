@@ -5,13 +5,15 @@ This module contains all ViewSets and APIViews for the CRM (Customer Relationshi
 system, including patient management, appointments, treatment plans, tickets, complaints,
 incidents, and public patient portal endpoints.
 """
-
 from django_filters.rest_framework import DjangoFilterBackend
+import secrets
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from django.utils import timezone
 
 from apps.accounts.permissions import ReadOnlyOrRole
 from apps.audit.mixins import AuditLoggingMixin
@@ -19,59 +21,77 @@ from apps.audit.models import AuditLogEntry
 from apps.audit.utils import log_action
 
 from .models import (
-    Appointment, Complaint, Machine, Patient, Room,
-    Ticket, TreatmentPlan, TreatmentSession,
-    Incident, TicketComment,
+    Appointment,
+    Complaint,
+    Incident,
+    Machine,
+    MaintenanceLog,
+    Patient,
+    PatientDocument,
+    PatientPortalAccount,
+    PatientPortalSession,
+    PatientRating,
+    PortalMessage,
+    Room,
+    Ticket,
+    TicketComment,
+    TreatmentPlan,
+    TreatmentSession,
+    AppointmentExtension,
+    DoctorAvailability,
+    PatientSchedulingPreferences,
+    WaitingList,
+    TreatmentProtocol,
+    ProtocolChangeLog,
+    DoseDeviation,
 )
+
 from .serializers import (
     AppointmentSerializer,
     ComplaintSerializer,
     IncidentSerializer,
     MachineSerializer,
+    PatientDocumentSerializer,
     PatientSerializer,
+    PortalAccountSerializer,
+    PortalLoginSerializer,
+    PortalMessageCreateSerializer,
+    PortalMessageSerializer,
+    PortalPasswordChangeSerializer,
+    PortalPasswordResetConfirmSerializer,
+    PortalPasswordResetRequestSerializer,
+    PortalPatientProfileSerializer,
+    PortalRatingSerializer,
+    PortalRegisterSerializer,
+    PortalTreatmentPlanSerializer,
     PublicComplaintStatusSerializer,
     PublicComplaintSubmitSerializer,
     PublicTicketStatusSerializer,
     PublicTicketSubmitSerializer,
     RoomSerializer,
+    StaffReplySerializer,
     TicketCommentSerializer,
     TicketSerializer,
     TreatmentPlanSerializer,
     TreatmentSessionSerializer,
+    TreatmentProtocolSerializer,
+    TreatmentProtocolListSerializer,
+    DoseDeviationSerializer,
+    MaintenanceLogSerializer,
 )
-
-
+from .apt_scheduling import book_slot, handle_cancellation, suggest_slots
 # =============================================================================
 # PERMISSION CLASSES
 # =============================================================================
 
 class CrmPermission(ReadOnlyOrRole):
-    """
-    Permission class for CRM (clinical) resources.
-    
-    Allows access to users with roles:
-    - admin: Full system access
-    - doctor: Medical staff
-    - secretary: Administrative staff
-    - radiotherapist: Radiation therapy staff
-    
-    Used for: Patients, Appointments, Treatment Plans, Treatment Sessions
-    """
     allowed_roles = ["admin", "doctor", "secretary", "radiotherapist"]
+    module_label  = "Patients"
 
 
 class TicketPermission(ReadOnlyOrRole):
-    """
-    Permission class for support/ticketing resources.
-    
-    Allows access to users with roles:
-    - admin: Full system access
-    - support_client: Support agents handling tickets/complaints
-    - secretary: Administrative staff
-    
-    Used for: Tickets, Complaints, Incidents
-    """
     allowed_roles = ["admin", "support_client", "secretary"]
+    module_label  = "Tickets"
 
 
 # =============================================================================
@@ -156,15 +176,19 @@ class PatientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         )
 
         # --- Financial summary ---
-        # Aggregate invoice data from accounting module
         try:
-            from apps.accounting.models import Invoice
+            from django.db.models import Sum
+            from apps.accounting.models import Invoice, Payment
             invoices_qs = Invoice.objects.filter(patient=patient)
-            total_invoiced = sum(float(i.total_amount) for i in invoices_qs)
-            total_paid = sum(float(i.paid_amount) for i in invoices_qs)
+            total_invoiced = float(
+                invoices_qs.aggregate(t=Sum("total_amount"))["t"] or 0
+            )
+            total_paid = float(
+                Payment.objects.filter(invoice__patient=patient)
+                .aggregate(t=Sum("amount"))["t"] or 0
+            )
             open_invoices = invoices_qs.exclude(status="paid").count()
         except Exception:
-            # Fallback if accounting module is not available
             total_invoiced = 0
             total_paid = 0
             open_invoices = 0
@@ -242,15 +266,54 @@ class TreatmentPlanViewSet(viewsets.ModelViewSet):
 # =============================================================================
 
 class MachineViewSet(viewsets.ModelViewSet):
-    """Manage radiotherapy machines."""
-    
-    queryset = Machine.objects.all()
+    """Manage radiotherapy machines (US-EQUIP-01) — MTBF/MTTR/disponibilité/calibration/amortissement."""
+
+    queryset = Machine.objects.prefetch_related("maintenance_logs").all()
     serializer_class = MachineSerializer
     permission_classes = [CrmPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["status"]
-    search_fields = ["name", "model"]
-    ordering_fields = ["name", "status"]
+    search_fields = ["name", "model", "serial_number", "manufacturer"]
+    ordering_fields = ["name", "status", "purchase_date", "next_calibration_date"]
+
+    @action(detail=False, methods=["get"])
+    def calibration_alerts(self, request):
+        """Return machines where calibration is overdue or due within 30 days."""
+        from django.utils import timezone
+        import datetime
+        today = timezone.now().date()
+        threshold = today + datetime.timedelta(days=30)
+        qs = self.get_queryset().filter(
+            next_calibration_date__lte=threshold,
+            status=Machine.Status.ACTIVE,
+        )
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"])
+    def stats(self, request, pk=None):
+        """Return MTBF, MTTR, disponibilité, book_value for a single machine."""
+        machine = self.get_object()
+        return Response({
+            "mtbf_hours": machine.mtbf_hours,
+            "mttr_hours": machine.mttr_hours,
+            "disponibilite": machine.disponibilite,
+            "annual_depreciation": float(machine.annual_depreciation) if machine.annual_depreciation else None,
+            "book_value": float(machine.book_value) if machine.book_value else None,
+            "calibration_overdue": machine.calibration_overdue,
+        })
+
+
+class MaintenanceLogViewSet(viewsets.ModelViewSet):
+    """Journal de maintenance des équipements (US-EQUIP-01)."""
+
+    queryset = MaintenanceLog.objects.select_related("machine").all()
+    serializer_class = MaintenanceLogSerializer
+    permission_classes = [CrmPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["machine", "intervention_type", "result"]
+    search_fields = ["machine__name", "technician", "description"]
+    ordering_fields = ["start_datetime", "cost"]
 
 
 class RoomViewSet(viewsets.ModelViewSet):
@@ -961,3 +1024,1196 @@ class TicketCommentViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("You can only delete your own comments.")
         instance.delete()
+    
+"""
+portal_views.py — US-PAT-04 : Portail Patient
+
+Ajouter ces vues dans backend/apps/crm/views.py (ou importer depuis ici).
+Toutes les vues portail commencent par « Portal » pour ne pas entrer en conflit.
+"""
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+PORTAL_SESSION_COOKIE = "portal_session"
+
+
+def _get_portal_account(request) -> PatientPortalAccount | None:
+    """Résout le compte portail depuis le cookie de session."""
+    token = request.COOKIES.get(PORTAL_SESSION_COOKIE)
+    if not token:
+        return None
+    try:
+        session = PatientPortalSession.objects.select_related(
+            "account__patient"
+        ).get(token=token)
+    except PatientPortalSession.DoesNotExist:
+        return None
+    if not session.is_valid:
+        session.delete()
+        return None
+    session.refresh()
+    return session.account
+
+
+def _portal_required(func):
+    """Décorateur : vérifie la session portail et injecte account + patient."""
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(self, request, *args, **kwargs):
+        account = _get_portal_account(request)
+        if not account:
+            return Response(
+                {"detail": "Session expirée. Veuillez vous reconnecter."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        request.portal_account = account
+        request.portal_patient = account.patient
+        return func(self, request, *args, **kwargs)
+
+    return wrapper
+
+
+# ─── 1. Authentification ──────────────────────────────────────────────────────
+
+class PortalLoginView(APIView):
+    """POST /api/portal/auth/login/ — AllowAny"""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        ser = PortalLoginSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        last_name = ser.validated_data["last_name"].strip()
+        cin = ser.validated_data["cin"].strip()
+        medical_record_number = ser.validated_data["medical_record_number"].strip()
+
+        try:
+            patient = Patient.objects.get(
+                last_name__iexact=last_name,
+                cin__iexact=cin,
+                medical_record_number__iexact=medical_record_number,
+            )
+        except Patient.DoesNotExist:
+            return Response(
+                {"detail": "Identifiants patient incorrects."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        account, created = PatientPortalAccount.objects.get_or_create(
+            patient=patient,
+            defaults={
+                "email": f"portal-{patient.id}@patient.local",
+                "password_hash": "",
+                "is_active": True,
+            },
+        )
+        if created:
+            account.set_password(secrets.token_urlsafe(24))
+            account.save(update_fields=["password_hash"])
+
+        if account.is_locked:
+            return Response(
+                {"detail": "Compte temporairement bloqué. Réessayez dans 15 minutes."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not account.is_active:
+            return Response(
+                {"detail": "Compte portail desactive."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not account.check_password(ser.validated_data["password"]):
+            account.record_failed_login()
+            return Response(
+                {"detail": "Identifiants patient incorrects."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        account.record_successful_login()
+        ip = request.META.get("REMOTE_ADDR")
+        ua = request.META.get("HTTP_USER_AGENT", "")
+        session = PatientPortalSession.create_for(account, ip=ip, ua=ua)
+
+        response = Response(
+            {
+                "patient_id": account.patient.id,
+                "patient_name": f"{account.patient.first_name} {account.patient.last_name}",
+                "mrn": account.patient.medical_record_number,
+                "email": account.email,
+            }
+        )
+        # Cookie HttpOnly — 30 min
+        response.set_cookie(
+            PORTAL_SESSION_COOKIE,
+            session.token,
+            max_age=1800,
+            httponly=True,
+            samesite="Lax",
+            secure=not request.META.get("SERVER_NAME", "").startswith("localhost"),
+        )
+        return response
+
+
+class PortalLogoutView(APIView):
+    """POST /api/portal/auth/logout/"""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.COOKIES.get(PORTAL_SESSION_COOKIE)
+        if token:
+            PatientPortalSession.objects.filter(token=token).delete()
+        response = Response({"detail": "Déconnecté."})
+        response.delete_cookie(PORTAL_SESSION_COOKIE)
+        return response
+
+
+class PortalMeView(APIView):
+    """GET /api/portal/auth/me/ — vérifie la session active"""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        account = _get_portal_account(request)
+        if not account:
+            return Response({"authenticated": False}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({
+            "authenticated": True,
+            "patient_id": account.patient.id,
+            "patient_name": f"{account.patient.first_name} {account.patient.last_name}",
+            "mrn": account.patient.medical_record_number,
+            "email": account.email,
+        })
+
+
+class PortalPasswordChangeView(APIView):
+    """POST /api/portal/auth/change-password/"""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        account = _get_portal_account(request)
+        if not account:
+            return Response({"detail": "Non authentifié."}, status=401)
+
+        ser = PortalPasswordChangeSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        if not account.check_password(ser.validated_data["current_password"]):
+            return Response({"detail": "Mot de passe actuel incorrect."}, status=400)
+
+        account.set_password(ser.validated_data["new_password"])
+        account.save()
+        return Response({"detail": "Mot de passe modifié avec succès."})
+
+
+class PortalPasswordResetRequestView(APIView):
+    """POST /api/portal/auth/reset-password/ — AllowAny"""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        ser = PortalPasswordResetRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        # Réponse générique pour éviter l'énumération d'emails
+        try:
+            account = PatientPortalAccount.objects.get(
+                email=ser.validated_data["email"], is_active=True
+            )
+            token = account.generate_reset_token()
+            account.save()
+            # TODO: envoyer email avec lien /portal/reset?token=<token>
+            # send_portal_reset_email(account.email, token)
+        except PatientPortalAccount.DoesNotExist:
+            pass  # Ne pas révéler l'existence de l'email
+
+        return Response(
+            {"detail": "Si cet email existe, un lien de réinitialisation a été envoyé."}
+        )
+
+
+class PortalPasswordResetConfirmView(APIView):
+    """POST /api/portal/auth/reset-password/confirm/ — AllowAny"""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        ser = PortalPasswordResetConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        try:
+            account = PatientPortalAccount.objects.get(
+                reset_token=ser.validated_data["token"],
+                is_active=True,
+            )
+        except PatientPortalAccount.DoesNotExist:
+            return Response({"detail": "Token invalide."}, status=400)
+
+        if account.reset_token_expires and timezone.now() > account.reset_token_expires:
+            return Response({"detail": "Token expiré. Veuillez refaire une demande."}, status=400)
+
+        account.set_password(ser.validated_data["new_password"])
+        account.reset_token = ""
+        account.reset_token_expires = None
+        account.save()
+        return Response({"detail": "Mot de passe réinitialisé avec succès."})
+
+
+# ─── 2. Dashboard ─────────────────────────────────────────────────────────────
+
+class PortalDashboardView(APIView):
+    """GET /api/portal/dashboard/"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+
+        # Prochains RDV (5 max)
+        upcoming = Appointment.objects.filter(
+            patient=patient,
+            status__in=["scheduled", "confirmed"],
+            appointment_date__gte=timezone.now(),
+        ).select_related("extension__doctor", "extension__room").order_by("appointment_date")[:5]
+
+        # Plan de traitement actif
+        active_plan = (
+            TreatmentPlan.objects.filter(patient=patient, status="active")
+            .prefetch_related("sessions")
+            .first()
+        )
+
+        # Messages non lus
+        unread = PortalMessage.objects.filter(
+            patient=patient,
+            direction=PortalMessage.Direction.STAFF_TO_PATIENT,
+            is_read=False,
+        ).count()
+
+        # Factures impayées
+        try:
+            from apps.accounting.models import Invoice
+            unpaid_qs = Invoice.objects.filter(patient=patient, status="issued")
+            unpaid_count = unpaid_qs.count()
+            unpaid_total = sum(inv.total_amount for inv in unpaid_qs) if unpaid_count else 0
+        except Exception:
+            unpaid_count = 0
+            unpaid_total = 0
+
+        from .serializers import (
+            PortalAppointmentSerializer,
+            PortalTreatmentPlanSerializer,
+            PortalPatientProfileSerializer,
+        )
+
+        data = {
+            "patient": PortalPatientProfileSerializer(patient).data,
+            "upcoming_appointments": PortalAppointmentSerializer(upcoming, many=True).data,
+            "active_treatment": PortalTreatmentPlanSerializer(active_plan).data if active_plan else None,
+            "unread_messages": unread,
+            "unpaid_invoices_count": unpaid_count,
+            "unpaid_invoices_total": str(unpaid_total),
+        }
+        return Response(data)
+
+
+# ─── 3. Historique Médical ────────────────────────────────────────────────────
+
+class PortalMedicalHistoryView(APIView):
+    """GET /api/portal/medical-history/?filter=6m|1y|all"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        period = request.query_params.get("filter", "all")
+
+        qs = TreatmentPlan.objects.filter(patient=patient).prefetch_related("sessions")
+
+        if period == "6m":
+            cutoff = timezone.now() - timezone.timedelta(days=180)
+            qs = qs.filter(start_date__gte=cutoff)
+        elif period == "1y":
+            cutoff = timezone.now() - timezone.timedelta(days=365)
+            qs = qs.filter(start_date__gte=cutoff)
+
+        qs = qs.order_by("-start_date")
+        return Response(PortalTreatmentPlanSerializer(qs, many=True).data)
+
+
+class PortalAppointmentHistoryView(APIView):
+    """GET /api/portal/appointments/?filter=6m|1y|all&upcoming=true"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        period = request.query_params.get("filter", "all")
+        upcoming_only = request.query_params.get("upcoming") == "true"
+
+        qs = Appointment.objects.filter(patient=patient).select_related(
+            "extension__doctor",
+            "extension__room",
+        )
+
+        if upcoming_only:
+            qs = qs.filter(
+                status__in=["scheduled", "confirmed"],
+                appointment_date__gte=timezone.now(),
+            )
+        else:
+            if period == "6m":
+                cutoff = timezone.now() - timezone.timedelta(days=180)
+                qs = qs.filter(appointment_date__gte=cutoff)
+            elif period == "1y":
+                cutoff = timezone.now() - timezone.timedelta(days=365)
+                qs = qs.filter(appointment_date__gte=cutoff)
+
+        qs = qs.order_by("-appointment_date")
+        from .serializers import PortalAppointmentSerializer
+        return Response(PortalAppointmentSerializer(qs, many=True).data)
+
+
+# ─── 4. Documents ─────────────────────────────────────────────────────────────
+
+class PortalDocumentListView(APIView):
+    """GET /api/portal/documents/"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        doc_type = request.query_params.get("type")
+        qs = PatientDocument.objects.filter(patient=patient).select_related("uploaded_by")
+        if doc_type:
+            qs = qs.filter(document_type=doc_type)
+        return Response(PatientDocumentSerializer(qs, many=True).data)
+
+
+class PortalDocumentDownloadView(APIView):
+    """GET /api/portal/documents/<pk>/download/"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request, pk):
+        patient = request.portal_patient
+        try:
+            doc = PatientDocument.objects.get(pk=pk, patient=patient)
+        except PatientDocument.DoesNotExist:
+            return Response({"detail": "Document introuvable."}, status=404)
+
+        # Retourner l'URL CDN ou le chemin pour le frontend
+        return Response({
+            "id": doc.id,
+            "title": doc.title,
+            "file_path": doc.file_path,
+            "document_type": doc.document_type,
+        })
+
+
+# ─── 5. Messagerie ────────────────────────────────────────────────────────────
+
+class PortalMessageListView(APIView):
+    """
+    GET  /api/portal/messages/        — liste des messages
+    POST /api/portal/messages/        — envoyer un message au staff
+    """
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        qs = PortalMessage.objects.filter(patient=patient)
+
+        # Marquer les messages staff→patient comme lus
+        unread = qs.filter(
+            direction=PortalMessage.Direction.STAFF_TO_PATIENT, is_read=False
+        )
+        for msg in unread:
+            msg.mark_read()
+
+        return Response(PortalMessageSerializer(qs, many=True).data)
+
+    @_portal_required
+    def post(self, request):
+        patient = request.portal_patient
+        ser = PortalMessageCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        msg = PortalMessage.objects.create(
+            patient=patient,
+            direction=PortalMessage.Direction.PATIENT_TO_STAFF,
+            subject=ser.validated_data.get("subject", ""),
+            content=ser.validated_data["content"],
+        )
+        # TODO: notifier le staff par email/notification interne
+        return Response(PortalMessageSerializer(msg).data, status=201)
+
+
+class PortalUnreadCountView(APIView):
+    """GET /api/portal/messages/unread-count/"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        count = PortalMessage.objects.filter(
+            patient=patient,
+            direction=PortalMessage.Direction.STAFF_TO_PATIENT,
+            is_read=False,
+        ).count()
+        return Response({"unread": count})
+
+
+# ── Vue Staff : répondre à un patient ──────────────────────────────────────────
+
+class StaffReplyToPatientView(APIView):
+    """
+    POST /api/crm/portal/staff-reply/
+    Réservée au staff authentifié (agent, médecin, secrétaire).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = StaffReplySerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        try:
+            patient = Patient.objects.get(pk=ser.validated_data["patient_id"])
+        except Patient.DoesNotExist:
+            return Response({"detail": "Patient introuvable."}, status=404)
+
+        msg = PortalMessage.objects.create(
+            patient=patient,
+            direction=PortalMessage.Direction.STAFF_TO_PATIENT,
+            staff_author=request.user,
+            subject=ser.validated_data.get("subject", ""),
+            content=ser.validated_data["content"],
+        )
+        # TODO: notifier le patient (email si notify_email, SMS si notify_sms)
+        return Response(PortalMessageSerializer(msg).data, status=201)
+
+
+# ─── 6. Notation ─────────────────────────────────────────────────────────────
+
+class PortalRatingView(APIView):
+    """
+    GET  /api/portal/rating/   — historique des notations du patient
+    POST /api/portal/rating/   — soumettre une nouvelle notation
+    """
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        ratings = PatientRating.objects.filter(patient=patient)
+        return Response(PortalRatingSerializer(ratings, many=True).data)
+
+    @_portal_required
+    def post(self, request):
+        patient = request.portal_patient
+        ser = PortalRatingSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        rating = PatientRating.objects.create(
+            patient=patient,
+            score=ser.validated_data["score"],
+            comment=ser.validated_data.get("comment", ""),
+            is_anonymous=True,  # Toujours anonyme (CDC)
+            treatment_session=ser.validated_data.get("treatment_session"),
+        )
+        return Response(PortalRatingSerializer(rating).data, status=201)
+
+
+# ─── 7. Profil ────────────────────────────────────────────────────────────────
+
+class PortalProfileView(APIView):
+    """
+    GET   /api/portal/profile/  — lire le profil
+    PATCH /api/portal/profile/  — mettre à jour coordonnées
+    """
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        account = request.portal_account
+        return Response({
+            "patient": PortalPatientProfileSerializer(patient).data,
+            "account": PortalAccountSerializer(account).data,
+        })
+
+    @_portal_required
+    def patch(self, request):
+        patient = request.portal_patient
+        account = request.portal_account
+
+        # Mise à jour coordonnées patient (champs autorisés seulement)
+        patient_ser = PortalPatientProfileSerializer(
+            patient, data=request.data.get("patient", {}), partial=True
+        )
+        patient_ser.is_valid(raise_exception=True)
+        patient_ser.save()
+
+        # Mise à jour préférences notification
+        account_ser = PortalAccountSerializer(
+            account, data=request.data.get("account", {}), partial=True
+        )
+        account_ser.is_valid(raise_exception=True)
+        account_ser.save()
+
+        return Response({
+            "patient": patient_ser.data,
+            "account": account_ser.data,
+        })
+
+
+# ─── 8. Création compte portail (Staff seulement) ────────────────────────────
+
+class PortalRegisterView(APIView):
+    """
+    POST /api/crm/portal/register/
+    Réservé au staff authentifié (secrétaire/admin) pour créer un compte portail.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = PortalRegisterSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        account = ser.save()
+        return Response(
+            {
+                "detail": "Compte portail créé.",
+                "email": account.email,
+                "patient_id": account.patient.id,
+            },
+            status=201,
+        )
+# ═══════════════════════════════════════════════════════════════════════════════
+# US-APT-02 : Rendez-vous Intelligents — Vues
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class SmartSuggestView(APIView):
+    """
+    POST /api/crm/appointments/smart-suggest/
+    Retourne 3 créneaux optimaux scorés.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .serializers import SmartSuggestRequestSerializer
+        ser = SmartSuggestRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        d = ser.validated_data
+
+        try:
+            patient = Patient.objects.get(pk=d["patient_id"])
+        except Patient.DoesNotExist:
+            return Response({"detail": "Patient introuvable."}, status=404)
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            User.objects.get(pk=d["doctor_id"])
+        except User.DoesNotExist:
+            return Response({"detail": "Médecin introuvable."}, status=404)
+
+        suggestions = suggest_slots(
+            patient=patient,
+            doctor_id=d["doctor_id"],
+            appointment_type=d.get("appointment_type", "simple"),
+            priority=d.get("priority", 2),
+            target_date=d.get("target_date"),
+        )
+
+        if not suggestions:
+            return Response(
+                {"detail": "Aucun créneau disponible dans les 60 prochains jours."},
+                status=404,
+            )
+
+        result = [
+            {
+                "type": s["type"],
+                "datetime": s["datetime"].isoformat(),
+                "duration_minutes": s["duration"],
+                "score": s["score"],
+                "score_label": f"⭐ {s['score']}/10",
+            }
+            for s in suggestions
+        ]
+        return Response({"suggestions": result, "count": len(result)})
+
+
+class SmartBookView(APIView):
+    """
+    POST /api/crm/appointments/smart-book/
+    Crée le RDV à partir d'un créneau sélectionné.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .serializers import SmartBookRequestSerializer
+        ser = SmartBookRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        d = ser.validated_data
+
+        try:
+            patient = Patient.objects.get(pk=d["patient_id"])
+        except Patient.DoesNotExist:
+            return Response({"detail": "Patient introuvable."}, status=404)
+
+        apt = book_slot(
+            patient=patient,
+            doctor_id=d["doctor_id"],
+            slot_dt=d["slot_datetime"],
+            appointment_type=d.get("appointment_type", "simple"),
+            priority=d.get("priority", 2),
+            room_id=d.get("room_id"),
+            machine_id=d.get("machine_id"),
+            reason=d.get("reason", ""),
+        )
+
+        ext = apt.extension
+        return Response(
+            {
+                "appointment_id": apt.id,
+                "appointment_date": apt.appointment_date.isoformat(),
+                "status": apt.status,
+                "duration_minutes": ext.duration_minutes,
+                "confirmation_token": ext.confirmation_token,
+                "confirmation_deadline": ext.confirmation_deadline.isoformat() if ext.confirmation_deadline else None,
+                "message": "Rendez-vous créé. En attente de confirmation patient (48h).",
+            },
+            status=201,
+        )
+
+
+class AppointmentConfirmView(APIView):
+    """
+    GET /api/crm/appointments/confirm/<token>/
+    Confirmation 1-clic depuis le lien email patient. AllowAny.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        try:
+            ext = AppointmentExtension.objects.select_related("appointment").get(
+                confirmation_token=token
+            )
+        except AppointmentExtension.DoesNotExist:
+            return Response({"detail": "Lien de confirmation invalide."}, status=404)
+
+        if ext.confirmed_at:
+            return Response({"detail": "Ce rendez-vous est déjà confirmé.", "status": "already_confirmed"})
+
+        if ext.confirmation_deadline and timezone.now() > ext.confirmation_deadline:
+            ext.appointment.status = "cancelled"
+            ext.appointment.save()
+            return Response(
+                {"detail": "Ce lien a expiré (48h dépassées). Le rendez-vous a été annulé."},
+                status=410,
+            )
+
+        ext.confirmed_at = timezone.now()
+        ext.appointment.status = "confirmed"
+        ext.appointment.save()
+        ext.save()
+
+        return Response({
+            "detail": "Rendez-vous confirmé avec succès.",
+            "appointment_date": ext.appointment.appointment_date.isoformat(),
+        })
+
+
+class AppointmentCancelView(APIView):
+    """
+    POST /api/crm/appointments/<pk>/cancel/
+    Annule un RDV et propose le créneau à la liste d'attente.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        notified = handle_cancellation(pk)
+        return Response({
+            "detail": "Rendez-vous annulé.",
+            "waiting_list_notified": len(notified),
+            "notified_patients": [
+                f"{w.patient.first_name} {w.patient.last_name}" for w in notified
+            ],
+        })
+
+
+class DoctorAvailabilityView(APIView):
+    """
+    GET  /api/crm/doctors/<doctor_id>/availability/
+    POST /api/crm/doctors/<doctor_id>/availability/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, doctor_id):
+        from .serializers import DoctorAvailabilitySerializer
+        qs = DoctorAvailability.objects.filter(doctor_id=doctor_id, is_active=True)
+        return Response(DoctorAvailabilitySerializer(qs, many=True).data)
+
+    def post(self, request, doctor_id):
+        from .serializers import DoctorAvailabilitySerializer
+        data = {**request.data, "doctor": doctor_id}
+        ser = DoctorAvailabilitySerializer(data=data)
+        ser.is_valid(raise_exception=True)
+        avail = ser.save()
+        return Response(DoctorAvailabilitySerializer(avail).data, status=201)
+
+
+class DoctorAvailabilityDetailView(APIView):
+    """
+    PATCH  /api/crm/doctors/availability/<pk>/
+    DELETE /api/crm/doctors/availability/<pk>/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get(self, pk):
+        try:
+            return DoctorAvailability.objects.get(pk=pk)
+        except DoctorAvailability.DoesNotExist:
+            return None
+
+    def patch(self, request, pk):
+        from .serializers import DoctorAvailabilitySerializer
+        obj = self._get(pk)
+        if not obj:
+            return Response({"detail": "Introuvable."}, status=404)
+        ser = DoctorAvailabilitySerializer(obj, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
+
+    def delete(self, request, pk):
+        obj = self._get(pk)
+        if not obj:
+            return Response({"detail": "Introuvable."}, status=404)
+        obj.is_active = False
+        obj.save()
+        return Response(status=204)
+
+
+class PatientPreferencesView(APIView):
+    """
+    GET /api/crm/patients/<patient_id>/scheduling-preferences/
+    PUT /api/crm/patients/<patient_id>/scheduling-preferences/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, patient_id):
+        from .serializers import PatientPreferencesSerializer
+        prefs, _ = PatientSchedulingPreferences.objects.get_or_create(
+            patient_id=patient_id,
+            defaults={"preferred_time_slot": "any", "preferred_days": []},
+        )
+        return Response(PatientPreferencesSerializer(prefs).data)
+
+    def put(self, request, patient_id):
+        from .serializers import PatientPreferencesSerializer
+        prefs, _ = PatientSchedulingPreferences.objects.get_or_create(patient_id=patient_id)
+        ser = PatientPreferencesSerializer(prefs, data={**request.data, "patient": patient_id})
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
+
+
+class WaitingListView(APIView):
+    """
+    GET  /api/crm/waiting-list/
+    POST /api/crm/waiting-list/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .serializers import WaitingListSerializer
+        qs = WaitingList.objects.filter(is_active=True).select_related("patient", "doctor")
+        return Response(WaitingListSerializer(qs, many=True).data)
+
+    def post(self, request):
+        from .serializers import WaitingListSerializer
+        ser = WaitingListSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        entry = ser.save()
+        return Response(WaitingListSerializer(entry).data, status=201)
+
+
+class WaitingListRespondView(APIView):
+    """
+    POST /api/crm/waiting-list/<pk>/respond/
+    Patient répond à une proposition (accept/decline). AllowAny (lien email).
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, pk):
+        try:
+            entry = WaitingList.objects.get(pk=pk)
+        except WaitingList.DoesNotExist:
+            return Response({"detail": "Introuvable."}, status=404)
+
+        if not entry.proposal_still_valid:
+            return Response({"detail": "Le délai de réponse est expiré (2h)."}, status=410)
+
+        accept = request.data.get("accept", False)
+        entry.proposal_accepted = bool(accept)
+
+        if accept:
+            apt = book_slot(
+                patient=entry.patient,
+                doctor_id=entry.doctor_id,
+                slot_dt=entry.proposed_slot,
+                appointment_type=entry.appointment_type,
+                priority=entry.priority,
+            )
+            entry.is_active = False
+            entry.save()
+            return Response({
+                "detail": "Rendez-vous confirmé.",
+                "appointment_id": apt.id,
+                "appointment_date": apt.appointment_date.isoformat(),
+            })
+        else:
+            entry.proposed_slot = None
+            entry.proposal_expires = None
+            entry.save()
+            return Response({"detail": "Proposition déclinée. Vous restez en liste d'attente."})
+
+
+class AppointmentExtensionView(APIView):
+    """
+    GET   /api/crm/appointments/<pk>/extension/
+    PATCH /api/crm/appointments/<pk>/extension/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        from .serializers import AppointmentExtensionSerializer
+        try:
+            ext = AppointmentExtension.objects.select_related(
+                "doctor", "room", "machine"
+            ).get(appointment_id=pk)
+        except AppointmentExtension.DoesNotExist:
+            return Response({"detail": "Pas d'extension pour ce RDV."}, status=404)
+        return Response(AppointmentExtensionSerializer(ext).data)
+
+    def patch(self, request, pk):
+        from .serializers import AppointmentExtensionSerializer
+        try:
+            ext = AppointmentExtension.objects.get(appointment_id=pk)
+        except AppointmentExtension.DoesNotExist:
+            return Response({"detail": "Pas d'extension pour ce RDV."}, status=404)
+        ser = AppointmentExtensionSerializer(ext, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
+    
+# ─────────────────────────────────────────────────────────────────────────────
+# US-TRT-05 — Protocoles de Traitement : viewsets
+# À coller à la fin de backend/apps/crm/views.py
+#
+# ET ajouter dans l'import models en tête de views.py :
+#   TreatmentProtocol, ProtocolChangeLog, DoseDeviation,
+#
+# ET ajouter dans l'import serializers en tête de views.py :
+#   TreatmentProtocolSerializer, TreatmentProtocolListSerializer,
+#   DoseDeviationSerializer, ProtocolChangeLogSerializer,
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TreatmentProtocolViewSet(viewsets.ModelViewSet):
+    """
+    CRUD complet + actions workflow pour les protocoles de traitement.
+
+    GET    /api/crm/protocols/              → liste (filtre ?status=)
+    POST   /api/crm/protocols/              → créer (draft)
+    GET    /api/crm/protocols/{id}/         → détail + changelog
+    PUT    /api/crm/protocols/{id}/         → modifier (draft/pending seulement)
+    PATCH  /api/crm/protocols/{id}/         → modifier partiel
+    DELETE /api/crm/protocols/{id}/         → supprimer (draft seulement)
+    POST   /api/crm/protocols/{id}/submit/  → soumettre pour approbation
+    POST   /api/crm/protocols/{id}/approve/ → approuver (médecin/admin)
+    POST   /api/crm/protocols/{id}/reject/  → rejeter → retour draft
+    POST   /api/crm/protocols/{id}/archive/ → archiver un approuvé
+    POST   /api/crm/protocols/{id}/clone/   → nouvelle version
+    GET    /api/crm/protocols/{id}/versions/ → toutes les versions de la lignée
+    """
+    permission_classes = [IsAuthenticated]
+    queryset = TreatmentProtocol.objects.select_related(
+        "created_by", "approved_by", "parent"
+    ).prefetch_related("changelog__performed_by")
+
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return TreatmentProtocolSerializer
+        return TreatmentProtocolListSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status = self.request.query_params.get("status")
+        if status:
+            qs = qs.filter(status=status)
+        cancer = self.request.query_params.get("cancer_type")
+        if cancer:
+            qs = qs.filter(cancer_type__icontains=cancer)
+        search = self.request.query_params.get("search")
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(name__icontains=search)
+                | Q(icd10_code__icontains=search)
+                | Q(cancer_type__icontains=search)
+            )
+        return qs
+
+    def perform_create(self, serializer):
+        proto = serializer.save(
+            status=TreatmentProtocol.Status.DRAFT,
+            created_by=self.request.user,
+        )
+        ProtocolChangeLog.objects.create(
+            protocol=proto,
+            action="created",
+            performed_by=self.request.user,
+            comment="Protocole créé",
+        )
+
+    def update(self, request, *args, **kwargs):
+        proto = self.get_object()
+        if proto.status not in (
+            TreatmentProtocol.Status.DRAFT,
+            TreatmentProtocol.Status.PENDING,
+        ):
+            return Response(
+                {"detail": "Seuls les protocoles en brouillon ou en attente peuvent être modifiés."},
+                status=400,
+            )
+        old_data = TreatmentProtocolListSerializer(proto).data
+        response = super().update(request, *args, **kwargs)
+        new_data = TreatmentProtocolListSerializer(self.get_object()).data
+        # Log champs modifiés
+        changes = {
+            k: {"from": str(old_data.get(k)), "to": str(new_data.get(k))}
+            for k in old_data
+            if old_data.get(k) != new_data.get(k) and k not in ("updated_at",)
+        }
+        if changes:
+            ProtocolChangeLog.objects.create(
+                protocol=self.get_object(),
+                action="updated",
+                performed_by=request.user,
+                changes=changes,
+            )
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        proto = self.get_object()
+        if proto.status != TreatmentProtocol.Status.DRAFT:
+            return Response(
+                {"detail": "Seuls les brouillons peuvent être supprimés."},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    # ── Actions workflow ───────────────────────────────────────────────────
+
+    @action(detail=True, methods=["post"])
+    def submit(self, request, pk=None):
+        """draft → pending"""
+        proto = self.get_object()
+        if proto.status != TreatmentProtocol.Status.DRAFT:
+            return Response(
+                {"detail": "Seul un brouillon peut être soumis."},
+                status=400,
+            )
+        proto.status = TreatmentProtocol.Status.PENDING
+        proto.save(update_fields=["status", "updated_at"])
+        ProtocolChangeLog.objects.create(
+            protocol=proto,
+            action="submitted",
+            performed_by=request.user,
+            comment=request.data.get("comment", ""),
+        )
+        return Response(TreatmentProtocolSerializer(proto).data)
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """pending → approved"""
+        proto = self.get_object()
+        if proto.status != TreatmentProtocol.Status.PENDING:
+            return Response(
+                {"detail": "Seul un protocole en attente peut être approuvé."},
+                status=400,
+            )
+        now = timezone.now()
+        proto.status      = TreatmentProtocol.Status.APPROVED
+        proto.approved_by = request.user
+        proto.approved_at = now
+        proto.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        ProtocolChangeLog.objects.create(
+            protocol=proto,
+            action="approved",
+            performed_by=request.user,
+            comment=request.data.get("comment", ""),
+        )
+        return Response(TreatmentProtocolSerializer(proto).data)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        """pending → draft"""
+        proto = self.get_object()
+        if proto.status != TreatmentProtocol.Status.PENDING:
+            return Response(
+                {"detail": "Seul un protocole en attente peut être rejeté."},
+                status=400,
+            )
+        proto.status = TreatmentProtocol.Status.DRAFT
+        proto.save(update_fields=["status", "updated_at"])
+        ProtocolChangeLog.objects.create(
+            protocol=proto,
+            action="rejected",
+            performed_by=request.user,
+            comment=request.data.get("comment", "Rejeté sans commentaire."),
+        )
+        return Response(TreatmentProtocolSerializer(proto).data)
+
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
+        """approved → archived"""
+        proto = self.get_object()
+        if proto.status != TreatmentProtocol.Status.APPROVED:
+            return Response(
+                {"detail": "Seul un protocole approuvé peut être archivé."},
+                status=400,
+            )
+        proto.status = TreatmentProtocol.Status.ARCHIVED
+        proto.save(update_fields=["status", "updated_at"])
+        ProtocolChangeLog.objects.create(
+            protocol=proto,
+            action="archived",
+            performed_by=request.user,
+            comment=request.data.get("comment", ""),
+        )
+        return Response({"detail": "Protocole archivé."})
+
+    @action(detail=True, methods=["post"])
+    def clone(self, request, pk=None):
+        """
+        Crée une nouvelle version (draft) à partir de la version approuvée.
+        Incrémente version, lie parent.
+        """
+        proto = self.get_object()
+        if proto.status != TreatmentProtocol.Status.APPROVED:
+            return Response(
+                {"detail": "Seul un protocole approuvé peut être cloné."},
+                status=400,
+            )
+        new_proto = TreatmentProtocol.objects.create(
+            parent                  = proto,
+            version                 = proto.version + 1,
+            name                    = proto.name,
+            icd10_code              = proto.icd10_code,
+            icd10_label             = proto.icd10_label,
+            cancer_type             = proto.cancer_type,
+            radiation_type          = proto.radiation_type,
+            total_dose_gy           = proto.total_dose_gy,
+            dose_per_fraction_gy    = proto.dose_per_fraction_gy,
+            number_of_fractions     = proto.number_of_fractions,
+            fraction_interval       = proto.fraction_interval,
+            total_duration_days     = proto.total_duration_days,
+            international_reference = proto.international_reference,
+            description             = proto.description,
+            preparation_instructions = proto.preparation_instructions,
+            contraindications       = proto.contraindications,
+            status                  = TreatmentProtocol.Status.DRAFT,
+            created_by              = request.user,
+        )
+        ProtocolChangeLog.objects.create(
+            protocol=new_proto,
+            action="cloned",
+            performed_by=request.user,
+            comment=f"Cloné depuis v{proto.version} (id {proto.id})",
+        )
+        return Response(
+            TreatmentProtocolSerializer(new_proto).data,
+            status=201,
+        )
+
+    @action(detail=True, methods=["get"])
+    def versions(self, request, pk=None):
+        """
+        Retourne toutes les versions de la même lignée (même root parent).
+        """
+        proto = self.get_object()
+        # Remonte jusqu'à la racine
+        root = proto
+        visited = set()
+        while root.parent_id and root.parent_id not in visited:
+            visited.add(root.id)
+            root = root.parent
+
+        def _collect_ids(node):
+            ids = [node.id]
+            for child in node.children.all():
+                ids.extend(_collect_ids(child))
+            return ids
+
+        ids = _collect_ids(root)
+        qs  = TreatmentProtocol.objects.filter(id__in=ids).order_by("version")
+        return Response(TreatmentProtocolListSerializer(qs, many=True).data)
+
+
+class DoseDeviationViewSet(viewsets.ModelViewSet):
+    """
+    GET    /api/crm/dose-deviations/               → liste (filtre ?reviewed=false)
+    GET    /api/crm/dose-deviations/{id}/           → détail
+    PATCH  /api/crm/dose-deviations/{id}/           → mettre à jour notes
+    POST   /api/crm/dose-deviations/{id}/review/    → marquer comme relu
+    """
+    permission_classes  = [IsAuthenticated]
+    serializer_class    = DoseDeviationSerializer
+    queryset = DoseDeviation.objects.select_related(
+        "session__patient", "protocol", "reviewed_by"
+    ).order_by("-created_at")
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        reviewed = self.request.query_params.get("reviewed")
+        if reviewed is not None:
+            qs = qs.filter(reviewed=reviewed.lower() == "true")
+        severity = self.request.query_params.get("severity")
+        if severity:
+            qs = qs.filter(severity=severity)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        """
+        Création automatique : calcule deviation_pct et severity.
+        expected_dose_gy et delivered_dose_gy obligatoires.
+        """
+        expected  = float(request.data.get("expected_dose_gy", 0))
+        delivered = float(request.data.get("delivered_dose_gy", 0))
+        if expected <= 0:
+            return Response({"detail": "expected_dose_gy doit être > 0."}, status=400)
+        pct = ((delivered - expected) / expected) * 100
+        data = {
+            **request.data,
+            "deviation_pct": round(pct, 2),
+            "severity": DoseDeviation.classify_severity(pct),
+        }
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=201)
+
+    @action(detail=True, methods=["post"])
+    def review(self, request, pk=None):
+        """Marquer un écart comme relu par le médecin."""
+        deviation = self.get_object()
+        deviation.reviewed    = True
+        deviation.reviewed_by = request.user
+        deviation.reviewed_at = timezone.now()
+        deviation.notes = request.data.get("notes", deviation.notes)
+        deviation.save(update_fields=["reviewed", "reviewed_by", "reviewed_at", "notes"])
+        return Response(DoseDeviationSerializer(deviation).data)

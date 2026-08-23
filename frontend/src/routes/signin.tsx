@@ -144,6 +144,11 @@ function SigninPage() {
             Patient portal — no account needed
           </Link>
         </div>
+        <div className="mt-2 text-center text-sm text-muted-foreground">
+          <Link to="/patient/login" className="font-medium text-primary underline">
+            Patient portal — account needed
+          </Link>
+        </div>
       </div>
     </div>
   );

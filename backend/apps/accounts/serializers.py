@@ -1,17 +1,22 @@
+# apps/accounts/serializers.py
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
-from .models import CustomRole, UserProfile
+from .models import CustomRole, UserProfile, RolePermission
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(max_length=30, required=False)
+
     class Meta:
         model = UserProfile
         fields = [
             "role",
             "phone",
             "department",
+            "is_super_admin",  # ⭐ ADDED
         ]
+        read_only_fields = ["is_super_admin"]  # ⭐ ADDED
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -28,11 +33,12 @@ class UserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "is_staff",
+            "is_superuser",
             "is_active",
             "date_joined",
             "profile",
         ]
-        read_only_fields = ["id", "is_staff", "date_joined"]
+        read_only_fields = ["id", "is_staff", "is_superuser", "date_joined"]
 
     def create(self, validated_data):
         profile_data = validated_data.pop("profile", {})
@@ -72,6 +78,7 @@ class UserSerializer(serializers.ModelSerializer):
 
         return instance
 
+
 class PasswordChangeSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
@@ -109,9 +116,6 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def create(self, validated_data):
-        # UserProfile is created automatically by the post_save signal in
-        # apps.accounts.signals, with its default (lowest-privilege) role —
-        # an admin can promote the account afterwards from Roles & Permissions.
         return User.objects.create_user(
             username=validated_data["username"],
             email=validated_data["email"],
@@ -155,8 +159,16 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         user.save(update_fields=["password"])
         return user
 
+
 class CustomRoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomRole
         fields = ["id", "name", "write_permissions", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class RolePermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RolePermission
+        fields = ["id", "role_name", "is_built_in", "write_permissions", "created_at", "updated_at"]
+        read_only_fields = ["id", "is_built_in", "created_at", "updated_at"]

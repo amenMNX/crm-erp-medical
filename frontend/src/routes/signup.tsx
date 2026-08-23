@@ -80,7 +80,6 @@ function SignupPage() {
           email,
           password,
         },
-        token: null,
       });
 
       setSuccessMessage(
@@ -219,6 +218,11 @@ function SignupPage() {
           Already have an account?{" "}
           <Link to="/signin" className="font-medium text-primary underline">
             Sign in
+          </Link>
+        </div>
+        <div className="mt-2 text-center text-sm text-muted-foreground">
+          <Link to="/patient/login" className="font-medium text-primary underline">
+            Patient portal — account needed
           </Link>
         </div>
       </div>

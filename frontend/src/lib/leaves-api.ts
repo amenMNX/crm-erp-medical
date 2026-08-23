@@ -11,6 +11,9 @@ export type ApiLeaveRequest = {
   motif: string;
   statut: LeaveStatus;
   notes: string;
+  duration_days: number;
+  employee_leave_credit_days: string;
+  employee_leave_days_remaining: number;
   approved_by: number | null;
   approved_by_name: string | null;
   created_at: string;

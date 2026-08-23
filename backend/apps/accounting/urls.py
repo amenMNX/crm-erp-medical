@@ -3,13 +3,13 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     CNAMClaimViewSet,
+    DunningActionViewSet,
     InvoiceViewSet,
     OutgoingPaymentViewSet,
     PaymentViewSet,
     SubscriptionPlanViewSet,
     SubscriptionChangeViewSet,
     InvoiceLineItemViewSet,
-    
 )
 
 router = DefaultRouter()
@@ -20,6 +20,7 @@ router.register("outgoing-payments", OutgoingPaymentViewSet, basename="outgoing-
 router.register("cnam-claims", CNAMClaimViewSet, basename="cnam-claim")
 router.register("subscription-plans", SubscriptionPlanViewSet, basename="subscription-plan")
 router.register("subscription-changes", SubscriptionChangeViewSet, basename="subscription-change")
+router.register("dunning", DunningActionViewSet, basename="dunning")
 
 urlpatterns = [
     path("", include(router.urls)),

@@ -55,7 +55,7 @@ def ticket_resolved_notify_agents(sender, instance, created, **kwargs):
     if instance.statut not in ("Résolu", "Fermé"):
         return
 
-    agents = instance.agents.select_related("userprofile").all()
+    agents = instance.agents.select_related("profile").all()
     if not agents.exists():
         return
 
@@ -92,18 +92,25 @@ def ticket_critical_notify_supervisors(sender, instance, created, **kwargs):
     if instance.statut in ("Résolu", "Fermé"):
         return
 
+    # Use a stable title (no 'ouvert'/'mis à jour') so get_or_create deduplicates
+    # across both the creation save and any subsequent update saves.
     title = f"🚨 Ticket Critique — {instance.numero}"
     body = (
-        f"Un ticket de priorité Critique vient d'être "
-        f"{'ouvert' if created else 'mis à jour'} : "
+        f"Ticket de priorité Critique : "
         f"« {instance.titre} » (client : {instance.client}). "
         f"Statut actuel : {instance.statut}. Intervention immédiate requise."
     )
 
-    admins = User.objects.filter(userprofile__role="admin").distinct()
+    admins = User.objects.filter(profile__role="admin").distinct()
     for admin in admins:
-        Notification.objects.get_or_create(
+        notif, created_notif = Notification.objects.get_or_create(
             recipient=admin,
             title=title,
             defaults={"body": body, "level": Notification.Level.ERROR},
         )
+        # If the notification already existed, refresh its body in case the
+        # ticket status changed (e.g. Nouveau → En cours) so admins see the
+        # latest state without receiving a duplicate notification.
+        if not created_notif and notif.body != body:
+            notif.body = body
+            notif.save(update_fields=["body"])

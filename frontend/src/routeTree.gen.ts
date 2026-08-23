@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TreatmentsRouteImport } from './routes/treatments'
 import { Route as TicketsRouteImport } from './routes/tickets'
 import { Route as TeamScheduleRouteImport } from './routes/team-schedule'
+import { Route as StocksRouteImport } from './routes/stocks'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -20,6 +21,8 @@ import { Route as SalaryAdvancesRouteImport } from './routes/salary-advances'
 import { Route as Roles_permissionRouteImport } from './routes/roles_permission'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as RecouvrementRouteImport } from './routes/recouvrement'
+import { Route as ProtocolsRouteImport } from './routes/protocols'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PaymentsRouteImport } from './routes/payments'
@@ -28,7 +31,9 @@ import { Route as MessagesRouteImport } from './routes/messages'
 import { Route as LeavesRouteImport } from './routes/leaves'
 import { Route as IncidentsRouteImport } from './routes/incidents'
 import { Route as HistoriqueRouteImport } from './routes/historique'
+import { Route as FormationsRouteImport } from './routes/formations'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as EquipmentRouteImport } from './routes/equipment'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
@@ -43,6 +48,15 @@ import { Route as PatientsIndexRouteImport } from './routes/patients.index'
 import { Route as InvoicesIndexRouteImport } from './routes/invoices.index'
 import { Route as PatientsNewRouteImport } from './routes/patients.new'
 import { Route as PatientsPatientIdRouteImport } from './routes/patients.$patientId'
+import { Route as PatientLoginRouteImport } from './routes/patient.login'
+import { Route as PatientLayoutRouteImport } from './routes/patient.layout'
+import { Route as PatientPortalRatingRouteImport } from './routes/patient-portal/rating'
+import { Route as PatientPortalProfileRouteImport } from './routes/patient-portal/profile'
+import { Route as PatientPortalMessagesRouteImport } from './routes/patient-portal/messages'
+import { Route as PatientPortalMedicalHistoryRouteImport } from './routes/patient-portal/medical-history'
+import { Route as PatientPortalDocumentsRouteImport } from './routes/patient-portal/documents'
+import { Route as PatientPortalDashboardRouteImport } from './routes/patient-portal/dashboard'
+import { Route as PatientPortalAppointmentsRouteImport } from './routes/patient-portal/appointments'
 import { Route as InvoicesNewRouteImport } from './routes/invoices.new'
 import { Route as InvoicesInvoiceIdRouteImport } from './routes/invoices.$invoiceId'
 
@@ -59,6 +73,11 @@ const TicketsRoute = TicketsRouteImport.update({
 const TeamScheduleRoute = TeamScheduleRouteImport.update({
   id: '/team-schedule',
   path: '/team-schedule',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StocksRoute = StocksRouteImport.update({
+  id: '/stocks',
+  path: '/stocks',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -101,6 +120,16 @@ const ReportsRoute = ReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RecouvrementRoute = RecouvrementRouteImport.update({
+  id: '/recouvrement',
+  path: '/recouvrement',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProtocolsRoute = ProtocolsRouteImport.update({
+  id: '/protocols',
+  path: '/protocols',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PortalRoute = PortalRouteImport.update({
   id: '/portal',
   path: '/portal',
@@ -141,9 +170,19 @@ const HistoriqueRoute = HistoriqueRouteImport.update({
   path: '/historique',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FormationsRoute = FormationsRouteImport.update({
+  id: '/formations',
+  path: '/formations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   id: '/forgot-password',
   path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EquipmentRoute = EquipmentRouteImport.update({
+  id: '/equipment',
+  path: '/equipment',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EmployeesRoute = EmployeesRouteImport.update({
@@ -216,6 +255,53 @@ const PatientsPatientIdRoute = PatientsPatientIdRouteImport.update({
   path: '/patients/$patientId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PatientLoginRoute = PatientLoginRouteImport.update({
+  id: '/patient/login',
+  path: '/patient/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientLayoutRoute = PatientLayoutRouteImport.update({
+  id: '/patient/layout',
+  path: '/patient/layout',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientPortalRatingRoute = PatientPortalRatingRouteImport.update({
+  id: '/patient-portal/rating',
+  path: '/patient-portal/rating',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientPortalProfileRoute = PatientPortalProfileRouteImport.update({
+  id: '/patient-portal/profile',
+  path: '/patient-portal/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientPortalMessagesRoute = PatientPortalMessagesRouteImport.update({
+  id: '/patient-portal/messages',
+  path: '/patient-portal/messages',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientPortalMedicalHistoryRoute =
+  PatientPortalMedicalHistoryRouteImport.update({
+    id: '/patient-portal/medical-history',
+    path: '/patient-portal/medical-history',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const PatientPortalDocumentsRoute = PatientPortalDocumentsRouteImport.update({
+  id: '/patient-portal/documents',
+  path: '/patient-portal/documents',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientPortalDashboardRoute = PatientPortalDashboardRouteImport.update({
+  id: '/patient-portal/dashboard',
+  path: '/patient-portal/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientPortalAppointmentsRoute =
+  PatientPortalAppointmentsRouteImport.update({
+    id: '/patient-portal/appointments',
+    path: '/patient-portal/appointments',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const InvoicesNewRoute = InvoicesNewRouteImport.update({
   id: '/invoices/new',
   path: '/invoices/new',
@@ -238,7 +324,9 @@ export interface FileRoutesByFullPath {
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRoute
+  '/equipment': typeof EquipmentRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/formations': typeof FormationsRoute
   '/historique': typeof HistoriqueRoute
   '/incidents': typeof IncidentsRoute
   '/leaves': typeof LeavesRoute
@@ -247,6 +335,8 @@ export interface FileRoutesByFullPath {
   '/payments': typeof PaymentsRoute
   '/payroll': typeof PayrollRoute
   '/portal': typeof PortalRoute
+  '/protocols': typeof ProtocolsRoute
+  '/recouvrement': typeof RecouvrementRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
@@ -255,11 +345,21 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/stocks': typeof StocksRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
   '/treatments': typeof TreatmentsRoute
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
+  '/patient-portal/appointments': typeof PatientPortalAppointmentsRoute
+  '/patient-portal/dashboard': typeof PatientPortalDashboardRoute
+  '/patient-portal/documents': typeof PatientPortalDocumentsRoute
+  '/patient-portal/medical-history': typeof PatientPortalMedicalHistoryRoute
+  '/patient-portal/messages': typeof PatientPortalMessagesRoute
+  '/patient-portal/profile': typeof PatientPortalProfileRoute
+  '/patient-portal/rating': typeof PatientPortalRatingRoute
+  '/patient/layout': typeof PatientLayoutRoute
+  '/patient/login': typeof PatientLoginRoute
   '/patients/$patientId': typeof PatientsPatientIdRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices/': typeof InvoicesIndexRoute
@@ -276,7 +376,9 @@ export interface FileRoutesByTo {
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRoute
+  '/equipment': typeof EquipmentRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/formations': typeof FormationsRoute
   '/historique': typeof HistoriqueRoute
   '/incidents': typeof IncidentsRoute
   '/leaves': typeof LeavesRoute
@@ -285,6 +387,8 @@ export interface FileRoutesByTo {
   '/payments': typeof PaymentsRoute
   '/payroll': typeof PayrollRoute
   '/portal': typeof PortalRoute
+  '/protocols': typeof ProtocolsRoute
+  '/recouvrement': typeof RecouvrementRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
@@ -293,11 +397,21 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/stocks': typeof StocksRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
   '/treatments': typeof TreatmentsRoute
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
+  '/patient-portal/appointments': typeof PatientPortalAppointmentsRoute
+  '/patient-portal/dashboard': typeof PatientPortalDashboardRoute
+  '/patient-portal/documents': typeof PatientPortalDocumentsRoute
+  '/patient-portal/medical-history': typeof PatientPortalMedicalHistoryRoute
+  '/patient-portal/messages': typeof PatientPortalMessagesRoute
+  '/patient-portal/profile': typeof PatientPortalProfileRoute
+  '/patient-portal/rating': typeof PatientPortalRatingRoute
+  '/patient/layout': typeof PatientLayoutRoute
+  '/patient/login': typeof PatientLoginRoute
   '/patients/$patientId': typeof PatientsPatientIdRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices': typeof InvoicesIndexRoute
@@ -315,7 +429,9 @@ export interface FileRoutesById {
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRoute
+  '/equipment': typeof EquipmentRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/formations': typeof FormationsRoute
   '/historique': typeof HistoriqueRoute
   '/incidents': typeof IncidentsRoute
   '/leaves': typeof LeavesRoute
@@ -324,6 +440,8 @@ export interface FileRoutesById {
   '/payments': typeof PaymentsRoute
   '/payroll': typeof PayrollRoute
   '/portal': typeof PortalRoute
+  '/protocols': typeof ProtocolsRoute
+  '/recouvrement': typeof RecouvrementRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
@@ -332,11 +450,21 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/stocks': typeof StocksRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
   '/treatments': typeof TreatmentsRoute
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/invoices/new': typeof InvoicesNewRoute
+  '/patient-portal/appointments': typeof PatientPortalAppointmentsRoute
+  '/patient-portal/dashboard': typeof PatientPortalDashboardRoute
+  '/patient-portal/documents': typeof PatientPortalDocumentsRoute
+  '/patient-portal/medical-history': typeof PatientPortalMedicalHistoryRoute
+  '/patient-portal/messages': typeof PatientPortalMessagesRoute
+  '/patient-portal/profile': typeof PatientPortalProfileRoute
+  '/patient-portal/rating': typeof PatientPortalRatingRoute
+  '/patient/layout': typeof PatientLayoutRoute
+  '/patient/login': typeof PatientLoginRoute
   '/patients/$patientId': typeof PatientsPatientIdRoute
   '/patients/new': typeof PatientsNewRoute
   '/invoices/': typeof InvoicesIndexRoute
@@ -355,7 +483,9 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/dashboard'
     | '/employees'
+    | '/equipment'
     | '/forgot-password'
+    | '/formations'
     | '/historique'
     | '/incidents'
     | '/leaves'
@@ -364,6 +494,8 @@ export interface FileRouteTypes {
     | '/payments'
     | '/payroll'
     | '/portal'
+    | '/protocols'
+    | '/recouvrement'
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
@@ -372,11 +504,21 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/stocks'
     | '/team-schedule'
     | '/tickets'
     | '/treatments'
     | '/invoices/$invoiceId'
     | '/invoices/new'
+    | '/patient-portal/appointments'
+    | '/patient-portal/dashboard'
+    | '/patient-portal/documents'
+    | '/patient-portal/medical-history'
+    | '/patient-portal/messages'
+    | '/patient-portal/profile'
+    | '/patient-portal/rating'
+    | '/patient/layout'
+    | '/patient/login'
     | '/patients/$patientId'
     | '/patients/new'
     | '/invoices/'
@@ -393,7 +535,9 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/dashboard'
     | '/employees'
+    | '/equipment'
     | '/forgot-password'
+    | '/formations'
     | '/historique'
     | '/incidents'
     | '/leaves'
@@ -402,6 +546,8 @@ export interface FileRouteTypes {
     | '/payments'
     | '/payroll'
     | '/portal'
+    | '/protocols'
+    | '/recouvrement'
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
@@ -410,11 +556,21 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/stocks'
     | '/team-schedule'
     | '/tickets'
     | '/treatments'
     | '/invoices/$invoiceId'
     | '/invoices/new'
+    | '/patient-portal/appointments'
+    | '/patient-portal/dashboard'
+    | '/patient-portal/documents'
+    | '/patient-portal/medical-history'
+    | '/patient-portal/messages'
+    | '/patient-portal/profile'
+    | '/patient-portal/rating'
+    | '/patient/layout'
+    | '/patient/login'
     | '/patients/$patientId'
     | '/patients/new'
     | '/invoices'
@@ -431,7 +587,9 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/dashboard'
     | '/employees'
+    | '/equipment'
     | '/forgot-password'
+    | '/formations'
     | '/historique'
     | '/incidents'
     | '/leaves'
@@ -440,6 +598,8 @@ export interface FileRouteTypes {
     | '/payments'
     | '/payroll'
     | '/portal'
+    | '/protocols'
+    | '/recouvrement'
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
@@ -448,11 +608,21 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/stocks'
     | '/team-schedule'
     | '/tickets'
     | '/treatments'
     | '/invoices/$invoiceId'
     | '/invoices/new'
+    | '/patient-portal/appointments'
+    | '/patient-portal/dashboard'
+    | '/patient-portal/documents'
+    | '/patient-portal/medical-history'
+    | '/patient-portal/messages'
+    | '/patient-portal/profile'
+    | '/patient-portal/rating'
+    | '/patient/layout'
+    | '/patient/login'
     | '/patients/$patientId'
     | '/patients/new'
     | '/invoices/'
@@ -470,7 +640,9 @@ export interface RootRouteChildren {
   ComplaintsRoute: typeof ComplaintsRoute
   DashboardRoute: typeof DashboardRoute
   EmployeesRoute: typeof EmployeesRoute
+  EquipmentRoute: typeof EquipmentRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
+  FormationsRoute: typeof FormationsRoute
   HistoriqueRoute: typeof HistoriqueRoute
   IncidentsRoute: typeof IncidentsRoute
   LeavesRoute: typeof LeavesRoute
@@ -479,6 +651,8 @@ export interface RootRouteChildren {
   PaymentsRoute: typeof PaymentsRoute
   PayrollRoute: typeof PayrollRoute
   PortalRoute: typeof PortalRoute
+  ProtocolsRoute: typeof ProtocolsRoute
+  RecouvrementRoute: typeof RecouvrementRoute
   ReportsRoute: typeof ReportsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   Roles_permissionRoute: typeof Roles_permissionRoute
@@ -487,11 +661,21 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
+  StocksRoute: typeof StocksRoute
   TeamScheduleRoute: typeof TeamScheduleRoute
   TicketsRoute: typeof TicketsRoute
   TreatmentsRoute: typeof TreatmentsRoute
   InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
   InvoicesNewRoute: typeof InvoicesNewRoute
+  PatientPortalAppointmentsRoute: typeof PatientPortalAppointmentsRoute
+  PatientPortalDashboardRoute: typeof PatientPortalDashboardRoute
+  PatientPortalDocumentsRoute: typeof PatientPortalDocumentsRoute
+  PatientPortalMedicalHistoryRoute: typeof PatientPortalMedicalHistoryRoute
+  PatientPortalMessagesRoute: typeof PatientPortalMessagesRoute
+  PatientPortalProfileRoute: typeof PatientPortalProfileRoute
+  PatientPortalRatingRoute: typeof PatientPortalRatingRoute
+  PatientLayoutRoute: typeof PatientLayoutRoute
+  PatientLoginRoute: typeof PatientLoginRoute
   PatientsPatientIdRoute: typeof PatientsPatientIdRoute
   PatientsNewRoute: typeof PatientsNewRoute
   InvoicesIndexRoute: typeof InvoicesIndexRoute
@@ -519,6 +703,13 @@ declare module '@tanstack/react-router' {
       path: '/team-schedule'
       fullPath: '/team-schedule'
       preLoaderRoute: typeof TeamScheduleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/stocks': {
+      id: '/stocks'
+      path: '/stocks'
+      fullPath: '/stocks'
+      preLoaderRoute: typeof StocksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -577,6 +768,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/recouvrement': {
+      id: '/recouvrement'
+      path: '/recouvrement'
+      fullPath: '/recouvrement'
+      preLoaderRoute: typeof RecouvrementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/protocols': {
+      id: '/protocols'
+      path: '/protocols'
+      fullPath: '/protocols'
+      preLoaderRoute: typeof ProtocolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/portal': {
       id: '/portal'
       path: '/portal'
@@ -633,11 +838,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HistoriqueRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/formations': {
+      id: '/formations'
+      path: '/formations'
+      fullPath: '/formations'
+      preLoaderRoute: typeof FormationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/forgot-password': {
       id: '/forgot-password'
       path: '/forgot-password'
       fullPath: '/forgot-password'
       preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/equipment': {
+      id: '/equipment'
+      path: '/equipment'
+      fullPath: '/equipment'
+      preLoaderRoute: typeof EquipmentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/employees': {
@@ -738,6 +957,69 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PatientsPatientIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/patient/login': {
+      id: '/patient/login'
+      path: '/patient/login'
+      fullPath: '/patient/login'
+      preLoaderRoute: typeof PatientLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient/layout': {
+      id: '/patient/layout'
+      path: '/patient/layout'
+      fullPath: '/patient/layout'
+      preLoaderRoute: typeof PatientLayoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient-portal/rating': {
+      id: '/patient-portal/rating'
+      path: '/patient-portal/rating'
+      fullPath: '/patient-portal/rating'
+      preLoaderRoute: typeof PatientPortalRatingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient-portal/profile': {
+      id: '/patient-portal/profile'
+      path: '/patient-portal/profile'
+      fullPath: '/patient-portal/profile'
+      preLoaderRoute: typeof PatientPortalProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient-portal/messages': {
+      id: '/patient-portal/messages'
+      path: '/patient-portal/messages'
+      fullPath: '/patient-portal/messages'
+      preLoaderRoute: typeof PatientPortalMessagesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient-portal/medical-history': {
+      id: '/patient-portal/medical-history'
+      path: '/patient-portal/medical-history'
+      fullPath: '/patient-portal/medical-history'
+      preLoaderRoute: typeof PatientPortalMedicalHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient-portal/documents': {
+      id: '/patient-portal/documents'
+      path: '/patient-portal/documents'
+      fullPath: '/patient-portal/documents'
+      preLoaderRoute: typeof PatientPortalDocumentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient-portal/dashboard': {
+      id: '/patient-portal/dashboard'
+      path: '/patient-portal/dashboard'
+      fullPath: '/patient-portal/dashboard'
+      preLoaderRoute: typeof PatientPortalDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient-portal/appointments': {
+      id: '/patient-portal/appointments'
+      path: '/patient-portal/appointments'
+      fullPath: '/patient-portal/appointments'
+      preLoaderRoute: typeof PatientPortalAppointmentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/invoices/new': {
       id: '/invoices/new'
       path: '/invoices/new'
@@ -766,7 +1048,9 @@ const rootRouteChildren: RootRouteChildren = {
   ComplaintsRoute: ComplaintsRoute,
   DashboardRoute: DashboardRoute,
   EmployeesRoute: EmployeesRoute,
+  EquipmentRoute: EquipmentRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
+  FormationsRoute: FormationsRoute,
   HistoriqueRoute: HistoriqueRoute,
   IncidentsRoute: IncidentsRoute,
   LeavesRoute: LeavesRoute,
@@ -775,6 +1059,8 @@ const rootRouteChildren: RootRouteChildren = {
   PaymentsRoute: PaymentsRoute,
   PayrollRoute: PayrollRoute,
   PortalRoute: PortalRoute,
+  ProtocolsRoute: ProtocolsRoute,
+  RecouvrementRoute: RecouvrementRoute,
   ReportsRoute: ReportsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   Roles_permissionRoute: Roles_permissionRoute,
@@ -783,11 +1069,21 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
+  StocksRoute: StocksRoute,
   TeamScheduleRoute: TeamScheduleRoute,
   TicketsRoute: TicketsRoute,
   TreatmentsRoute: TreatmentsRoute,
   InvoicesInvoiceIdRoute: InvoicesInvoiceIdRoute,
   InvoicesNewRoute: InvoicesNewRoute,
+  PatientPortalAppointmentsRoute: PatientPortalAppointmentsRoute,
+  PatientPortalDashboardRoute: PatientPortalDashboardRoute,
+  PatientPortalDocumentsRoute: PatientPortalDocumentsRoute,
+  PatientPortalMedicalHistoryRoute: PatientPortalMedicalHistoryRoute,
+  PatientPortalMessagesRoute: PatientPortalMessagesRoute,
+  PatientPortalProfileRoute: PatientPortalProfileRoute,
+  PatientPortalRatingRoute: PatientPortalRatingRoute,
+  PatientLayoutRoute: PatientLayoutRoute,
+  PatientLoginRoute: PatientLoginRoute,
   PatientsPatientIdRoute: PatientsPatientIdRoute,
   PatientsNewRoute: PatientsNewRoute,
   InvoicesIndexRoute: InvoicesIndexRoute,

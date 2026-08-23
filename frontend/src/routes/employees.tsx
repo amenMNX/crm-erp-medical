@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CalendarDays,
   Loader2,
   Pencil,
   Plus,
@@ -10,6 +11,7 @@ import {
   UserCheck,
   Users,
   UserX,
+  Wallet,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -98,6 +100,19 @@ function displayDate(employee: ApiEmployee) {
   return employee.hire_date ?? employee.created_at.slice(0, 10);
 }
 
+function formatMoney(value: string | number | null | undefined) {
+  return `${Number(value ?? 0).toLocaleString("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} TND`;
+}
+
+function formatDays(value: string | number | null | undefined) {
+  return Number(value ?? 0).toLocaleString("fr-FR", {
+    maximumFractionDigits: 1,
+  });
+}
+
 function EmployeesPage() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
@@ -117,6 +132,9 @@ function EmployeesPage() {
     mutationFn: createEmployee,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["employees"] });
+      // A new employee may have auto-provisioned a role from their job title —
+      // invalidate so Roles & Permissions page reflects it immediately.
+      queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
       setEditingEmployee(null);
       setOpen(false);
     },
@@ -127,6 +145,8 @@ function EmployeesPage() {
       updateEmployee(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["employees"] });
+      // Job title change may have auto-provisioned a new role.
+      queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
       setEditingEmployee(null);
       setOpen(false);
     },
@@ -163,6 +183,14 @@ function EmployeesPage() {
 
   const activeCount = employees.filter((employee) => employee.is_active).length;
   const inactiveCount = employees.length - activeCount;
+  const totalMonthlySalary = employees.reduce(
+    (sum, employee) => sum + Number(employee.salary?.total_monthly_compensation ?? 0),
+    0,
+  );
+  const totalLeaveRemaining = employees.reduce(
+    (sum, employee) => sum + Number(employee.leave_days_remaining ?? 0),
+    0,
+  );
   const mutationPending =
     createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
 
@@ -180,6 +208,13 @@ function EmployeesPage() {
     const department = String(formData.get("department") ?? "").trim();
     const hireDate = String(formData.get("hire_date") ?? "").trim();
     const contractType = String(formData.get("contract_type") ?? "cdi") as ContractType;
+    const leaveCreditDays = String(formData.get("leave_credit_days") ?? "30").trim();
+    const baseSalary = String(formData.get("base_salary") ?? "0").trim();
+    const transportAllowance = String(formData.get("transport_allowance") ?? "0").trim();
+    const mealAllowance = String(formData.get("meal_allowance") ?? "0").trim();
+    const bonusPercentage = String(formData.get("bonus_percentage") ?? "0").trim();
+    const bankName = String(formData.get("bank_name") ?? "").trim();
+    const bankAccount = String(formData.get("bank_account") ?? "").trim();
     const isActive = String(formData.get("status") ?? "active") === "active";
     const notes = String(formData.get("notes") ?? "").trim();
 
@@ -196,6 +231,13 @@ function EmployeesPage() {
       department,
       hire_date: hireDate || null,
       contract_type: contractType,
+      leave_credit_days: leaveCreditDays || "30",
+      base_salary: baseSalary || "0",
+      transport_allowance: transportAllowance || "0",
+      meal_allowance: mealAllowance || "0",
+      bonus_percentage: bonusPercentage || "0",
+      bank_name: bankName,
+      bank_account: bankAccount,
       is_active: isActive,
       notes,
     };
@@ -229,7 +271,7 @@ function EmployeesPage() {
               <Plus className="h-4 w-4" /> Add Employee
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
             <form
               key={editingEmployee?.id ?? "new-employee"}
               onSubmit={saveEmployee}
@@ -357,6 +399,79 @@ function EmployeesPage() {
                     className="mt-2"
                   />
                 </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-foreground">Salaire de base mensuel</span>
+                  <Input
+                    name="base_salary"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="1200.00"
+                    defaultValue={editingEmployee?.salary?.base_salary ?? "0"}
+                    className="mt-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-foreground">Credit conge annuel</span>
+                  <Input
+                    name="leave_credit_days"
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    placeholder="30"
+                    defaultValue={editingEmployee?.leave_credit_days ?? "30"}
+                    className="mt-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-foreground">Prime transport</span>
+                  <Input
+                    name="transport_allowance"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    defaultValue={editingEmployee?.salary?.transport_allowance ?? "0"}
+                    className="mt-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-foreground">Prime repas</span>
+                  <Input
+                    name="meal_allowance"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    defaultValue={editingEmployee?.salary?.meal_allowance ?? "0"}
+                    className="mt-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-foreground">Bonus (%)</span>
+                  <Input
+                    name="bonus_percentage"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    defaultValue={editingEmployee?.salary?.bonus_percentage ?? "0"}
+                    className="mt-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-foreground">Banque</span>
+                  <Input
+                    name="bank_name"
+                    defaultValue={editingEmployee?.salary?.bank_name ?? ""}
+                    className="mt-2"
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="text-sm font-medium text-foreground">Compte bancaire</span>
+                  <Input
+                    name="bank_account"
+                    defaultValue={editingEmployee?.salary?.bank_account ?? ""}
+                    className="mt-2"
+                  />
+                </label>
                 <label className="block sm:col-span-2">
                   <span className="text-sm font-medium text-foreground">Notes</span>
                   <Textarea
@@ -382,7 +497,7 @@ function EmployeesPage() {
       }
     >
       <div className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardContent className="flex items-center gap-3 p-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -413,6 +528,28 @@ function EmployeesPage() {
               <div>
                 <p className="text-sm text-muted-foreground">Inactive</p>
                 <p className="text-2xl font-semibold">{inactiveCount}</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 p-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Wallet className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Masse salariale</p>
+                <p className="text-2xl font-semibold">{formatMoney(totalMonthlySalary)}</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 p-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
+                <CalendarDays className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Credit conge</p>
+                <p className="text-2xl font-semibold">{formatDays(totalLeaveRemaining)} j</p>
               </div>
             </CardContent>
           </Card>
@@ -476,9 +613,12 @@ function EmployeesPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Employee</TableHead>
-                      <TableHead>Job title</TableHead>
+                      <TableHead>Job title / Role</TableHead>
                       <TableHead>Department</TableHead>
                       <TableHead>Contract</TableHead>
+                      <TableHead>Salaire</TableHead>
+                      <TableHead>Conge</TableHead>
+                      <TableHead>Date of birth</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Joined</TableHead>
                       <TableHead className="w-24" />
@@ -504,11 +644,36 @@ function EmployeesPage() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell>{employee.job_title}</TableCell>
+                          <TableCell>
+                            <div>
+                              <p>{employee.job_title}</p>
+                              {employee.role_name && (
+                                <Badge variant="outline" className="mt-0.5 text-[10px] px-1.5 py-0">
+                                  {employee.role_name}
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-muted-foreground">
                             {employee.department}
                           </TableCell>
                           <TableCell>{contractLabels[employee.contract_type]}</TableCell>
+                          <TableCell>{formatMoney(employee.salary?.base_salary)}</TableCell>
+                          <TableCell>
+                            <div className="text-sm">
+                              <span className="font-medium">
+                                {formatDays(employee.leave_days_remaining)} j
+                              </span>
+                              <span className="text-muted-foreground">
+                                {" "}restants / {formatDays(employee.leave_credit_days)} j
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {employee.date_naissance
+                              ? new Date(employee.date_naissance).toLocaleDateString("fr-FR")
+                              : "—"}
+                          </TableCell>
                           <TableCell>
                             <Badge className={statusClass(status)}>
                               {status === "active" ? "Active" : "Inactive"}
@@ -546,7 +711,7 @@ function EmployeesPage() {
                     })}
                     {filteredEmployees.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                        <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
                           No employees match these filters.
                         </TableCell>
                       </TableRow>

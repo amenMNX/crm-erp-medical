@@ -22,10 +22,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { fetchAppointments, createAppointment } from "@/lib/appointments-api";
 import { fetchAllPatients } from "@/lib/patients-api";
+import { SmartAppointmentDialog } from "@/components/smart-appointment-dialog";
+import { fetchUsers } from "@/lib/users-api";
 
 export const Route = createFileRoute("/schedule")({
   head: () => ({
@@ -49,7 +51,7 @@ const STATUS_COLOR: Record<string, string> = {
 function startOfWeek(d: Date) {
   const date = new Date(d);
   const day = date.getDay();
-  const diff = day === 0 ? -6 : 1 - day; // Monday as start
+  const diff = day === 0 ? -6 : 1 - day;
   date.setDate(date.getDate() + diff);
   date.setHours(0, 0, 0, 0);
   return date;
@@ -65,11 +67,15 @@ function fmtDate(d: Date) {
 function SchedulePage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [smartOpen, setSmartOpen] = useState(false);
   const [form, setForm] = useState({ title: "", date: fmtDate(new Date()), time: "09:00", patient: "", reason: "" });
 
   const appointmentsQuery = useQuery({ queryKey: ["appointments"], queryFn: fetchAppointments });
   const patientsQuery = useQuery({ queryKey: ["patients-all"], queryFn: fetchAllPatients });
+  const usersQuery = useQuery({ queryKey: ["users"], queryFn: fetchUsers });
+  
   const patients = patientsQuery.data ?? [];
+  const doctors = (usersQuery.data ?? []).filter((u: any) => u.profile?.role === "doctor" || u.role === "doctor");
 
   const weekStart = useMemo(() => startOfWeek(new Date()), []);
   const weekDays = useMemo(
@@ -121,56 +127,62 @@ function SchedulePage() {
     <AppShell
       title="Schedule"
       actions={
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4" /> New Appointment
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>New Appointment</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="stitle">Title</Label>
-                <Input id="stitle" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Follow-up consultation" />
-              </div>
-              <div>
-                <Label>Patient</Label>
-                <Select value={form.patient} onValueChange={(v) => setForm({ ...form, patient: v })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a patient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {patients.map((p) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {p.first_name} {p.last_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label htmlFor="sdate">Date</Label>
-                  <Input id="sdate" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-                </div>
-                <div>
-                  <Label htmlFor="stime">Time</Label>
-                  <Input id="stime" type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={createAppt} disabled={createMutation.isPending}>
-                {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                Create
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setSmartOpen(true)} className="gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            Planification intelligente
+          </Button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4" /> New Appointment
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>New Appointment</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="stitle">Title</Label>
+                  <Input id="stitle" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Follow-up consultation" />
+                </div>
+                <div>
+                  <Label>Patient</Label>
+                  <Select value={form.patient} onValueChange={(v) => setForm({ ...form, patient: v })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a patient" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {patients.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.first_name} {p.last_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="sdate">Date</Label>
+                    <Input id="sdate" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="stime">Time</Label>
+                    <Input id="stime" type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+                <Button onClick={createAppt} disabled={createMutation.isPending}>
+                  {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Create
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       }
     >
       {appointmentsQuery.isLoading ? (
@@ -235,6 +247,17 @@ function SchedulePage() {
           </div>
         </>
       )}
+
+      <SmartAppointmentDialog
+        open={smartOpen}
+        onOpenChange={setSmartOpen}
+        patients={patients}
+        doctors={doctors}
+        onBooked={() => {
+          queryClient.invalidateQueries({ queryKey: ["appointments"] });
+          toast.success("Rendez-vous intelligent créé avec succès");
+        }}
+      />
     </AppShell>
   );
 }

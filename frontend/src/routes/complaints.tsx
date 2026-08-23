@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Search } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,9 +35,10 @@ import {
   createComplaint,
   fetchComplaints,
   updateComplaint,
+  type ApiComplaint,
 } from "@/lib/complaints-api";
+import { fetchPatients, type ApiPatient } from "@/lib/tickets-api";
 import type { ComplaintStatus } from "@/lib/domain";
-import { fetchPatients } from "@/lib/tickets-api";
 
 export const Route = createFileRoute("/complaints")({
   component: ComplaintsPage,
@@ -47,8 +48,8 @@ const statuses: ComplaintStatus[] = ["Nouvelle", "En traitement", "Résolue", "F
 
 function statusClass(status: ComplaintStatus) {
   if (status === "Nouvelle") return "bg-primary/15 text-primary border-0";
-  if (status === "En traitement") return "bg-warning/15 text-warning border-0";
-  if (status === "Résolue") return "bg-success/15 text-success border-0";
+  if (status === "En traitement") return "bg-amber-100 text-amber-700 border-0";
+  if (status === "Résolue") return "bg-green-100 text-green-700 border-0";
   return "bg-muted text-muted-foreground border-0";
 }
 
@@ -61,21 +62,40 @@ function ComplaintsPage() {
   const complaintsQuery = useQuery({
     queryKey: ["complaints"],
     queryFn: fetchComplaints,
+    retry: 1,
+    staleTime: 1000 * 60, // 1 minute
   });
 
   const patientsQuery = useQuery({
     queryKey: ["patients"],
     queryFn: fetchPatients,
+    retry: 1,
+    staleTime: 1000 * 60 * 5, // 5 minutes
   });
 
-  const complaints = complaintsQuery.data ?? [];
-  const patients = patientsQuery.data ?? [];
+  // Properly typed data with fallbacks
+  const complaints = (complaintsQuery.data ?? []) as ApiComplaint[];
+  const patients = (patientsQuery.data ?? []) as ApiPatient[];
+
+  const hasError = complaintsQuery.isError || patientsQuery.isError;
+  const isLoading = complaintsQuery.isLoading || patientsQuery.isLoading;
+
+  // Log errors for debugging
+  if (complaintsQuery.error) {
+    console.error("Complaints error:", complaintsQuery.error);
+  }
+  if (patientsQuery.error) {
+    console.error("Patients error:", patientsQuery.error);
+  }
 
   const createMutation = useMutation({
     mutationFn: createComplaint,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["complaints"] });
       setOpen(false);
+    },
+    onError: (error) => {
+      console.error("Failed to create complaint:", error);
     },
   });
 
@@ -85,6 +105,9 @@ function ComplaintsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["complaints"] });
     },
+    onError: (error) => {
+      console.error("Failed to update complaint:", error);
+    },
   });
 
   const filteredComplaints = useMemo(() => {
@@ -93,8 +116,8 @@ function ComplaintsPage() {
     return complaints.filter((complaint) => {
       const matchesQuery =
         !q ||
-        complaint.client_name.toLowerCase().includes(q) ||
-        complaint.description.toLowerCase().includes(q);
+        (complaint.client_name?.toLowerCase() || "").includes(q) ||
+        (complaint.description?.toLowerCase() || "").includes(q);
 
       const matchesStatus = statusFilter === "all" || complaint.statut === statusFilter;
 
@@ -121,12 +144,31 @@ function ComplaintsPage() {
     updateMutation.mutate({ id, statut });
   }
 
-  const isLoading = complaintsQuery.isLoading || patientsQuery.isLoading;
-  const loadError = complaintsQuery.error || patientsQuery.error;
+  // Show error state
+  if (hasError) {
+    return (
+      <AppShell title="Réclamations">
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex flex-col items-center justify-center gap-4 py-8">
+              <AlertTriangle className="h-12 w-12 text-destructive" />
+              <h3 className="text-lg font-semibold">Unable to load complaints</h3>
+              <p className="text-sm text-muted-foreground text-center max-w-md">
+                There was a problem loading the data. Please try refreshing the page.
+              </p>
+              <Button onClick={() => window.location.reload()}>
+                Refresh Page
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell
-      title="Complaints"
+      title="Réclamations"
       actions={
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -146,11 +188,15 @@ function ComplaintsPage() {
                   <SelectValue placeholder="Client / patient" />
                 </SelectTrigger>
                 <SelectContent>
-                  {patients.map((patient) => (
-                    <SelectItem key={patient.id} value={String(patient.id)}>
-                      {patient.first_name} {patient.last_name}
-                    </SelectItem>
-                  ))}
+                  {patients.length > 0 ? (
+                    patients.map((patient) => (
+                      <SelectItem key={patient.id} value={String(patient.id)}>
+                        {patient.first_name} {patient.last_name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="" disabled>No patients available</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
 
@@ -203,13 +249,7 @@ function ComplaintsPage() {
             </div>
           )}
 
-          {!isLoading && loadError && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              Couldn't load complaints. Please refresh the page.
-            </div>
-          )}
-
-          {!isLoading && !loadError && (
+          {!isLoading && !hasError && (
             <div className="overflow-hidden rounded-md border">
               <Table>
                 <TableHeader>
@@ -252,18 +292,33 @@ function ComplaintsPage() {
                         </Select>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {complaint.created_at.slice(0, 10)}
+                        {complaint.created_at?.slice(0, 10) || "-"}
                       </TableCell>
                     </TableRow>
                   ))}
 
-                  {filteredComplaints.length === 0 ? (
+                  {filteredComplaints.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                        No complaints match these filters.
+                        {query || statusFilter !== "all" ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <p>No complaints match these filters.</p>
+                            <Button
+                              variant="link"
+                              onClick={() => {
+                                setQuery("");
+                                setStatusFilter("all");
+                              }}
+                            >
+                              Clear filters
+                            </Button>
+                          </div>
+                        ) : (
+                          "No complaints found."
+                        )}
                       </TableCell>
                     </TableRow>
-                  ) : null}
+                  )}
                 </TableBody>
               </Table>
             </div>

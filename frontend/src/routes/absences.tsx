@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,6 +11,7 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,7 +42,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-// ✅ FIXED: Import from singular 'absence-api' to match your file name
 import {
   createAbsence,
   deleteAbsence,
@@ -51,221 +51,247 @@ import {
 import { fetchEmployees } from "@/lib/employees-api";
 
 export const Route = createFileRoute("/absences")({
+  head: () => ({
+    meta: [{ title: "Absences — Base" }],
+  }),
   component: AbsencesPage,
 });
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 type HistoryEntry = {
   id: number;
-  action: "registered" | "deleted";
+  action: "enregistrée" | "supprimée";
   absence: ApiAbsence;
   timestamp: string;
 };
 
-const formatDate = (value: string) => {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day).toLocaleDateString("fr-FR", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
-};
+}
 
-const formatTimestamp = (value: string) =>
-  new Date(value).toLocaleString("fr-FR", {
+function formatTimestamp(value: string) {
+  return new Date(value).toLocaleString("fr-FR", {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
 
-const initials = (name: string) =>
-  name
+function initials(name: string) {
+  return name
     .split(" ")
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("");
+}
 
-const isThisWeek = (value: string) => {
+function isThisWeek(value: string) {
   const date = new Date(value);
   const now = new Date();
   const start = new Date(now);
   start.setDate(now.getDate() - now.getDay());
   start.setHours(0, 0, 0, 0);
   return date >= start;
-};
+}
+
+// ── Dialog de création ────────────────────────────────────────────────────────
+
+function NewAbsenceDialog({
+  onCreated,
+}: {
+  onCreated: (absence: ApiAbsence) => void;
+}) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ employee: "", date: "", motif: "" });
+
+  const employeesQuery = useQuery({
+    queryKey: ["employees"],
+    queryFn: fetchEmployees,
+  });
+  const employees = employeesQuery.data ?? [];
+
+  const mutation = useMutation({
+    mutationFn: createAbsence,
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ["absences"] });
+      onCreated(created);
+      toast.success("Absence enregistrée.");
+      setOpen(false);
+      setForm({ employee: "", date: "", motif: "" });
+    },
+    onError: () => toast.error("Impossible d'enregistrer l'absence."),
+  });
+
+  const valid = !!form.employee && !!form.date && !!form.motif.trim();
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm">
+          <Plus className="h-4 w-4 mr-2" />
+          Enregistrer une absence
+        </Button>
+      </DialogTrigger>
+
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Enregistrer une absence</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          <div className="space-y-1">
+            <Label>Employé *</Label>
+            <Select
+              value={form.employee}
+              onValueChange={(v) => setForm((f) => ({ ...f, employee: v }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Sélectionner un employé…" />
+              </SelectTrigger>
+              <SelectContent>
+                {employees.map((emp) => (
+                  <SelectItem key={emp.id} value={String(emp.id)}>
+                    {emp.first_name} {emp.last_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <Label>Date *</Label>
+            <Input
+              type="date"
+              value={form.date}
+              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label>Motif *</Label>
+            <Textarea
+              rows={3}
+              value={form.motif}
+              onChange={(e) => setForm((f) => ({ ...f, motif: e.target.value }))}
+              placeholder="Maladie, absence injustifiée, événement familial…"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Annuler
+          </Button>
+          <Button
+            onClick={() =>
+              mutation.mutate({
+                employee: Number(form.employee),
+                date: form.date,
+                motif: form.motif.trim(),
+              })
+            }
+            disabled={!valid || mutation.isPending}
+          >
+            {mutation.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            )}
+            Enregistrer
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Page principale ───────────────────────────────────────────────────────────
 
 function AbsencesPage() {
-  const queryClient = useQueryClient();
+  const qc = useQueryClient();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
 
-  // ✅ Fetch real data from API
-  const absencesQuery = useQuery({ 
-    queryKey: ["absences"], 
-    queryFn: fetchAbsences 
-  });
-  
-  const employeesQuery = useQuery({ 
-    queryKey: ["employees"], 
-    queryFn: fetchEmployees 
+  const absencesQuery = useQuery({
+    queryKey: ["absences"],
+    queryFn: fetchAbsences,
   });
 
   const absences = absencesQuery.data ?? [];
-  const employees = employeesQuery.data ?? [];
-
-  const createMutation = useMutation({
-    mutationFn: createAbsence,
-    onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ["absences"] });
-      setHistory((current) => [
-        { 
-          id: Date.now(), 
-          action: "registered", 
-          absence: created, 
-          timestamp: new Date().toISOString() 
-        },
-        ...current,
-      ]);
-      setOpen(false);
-      setFormError(null);
-    },
-    onError: () => setFormError("Failed to register absence."),
-  });
 
   const deleteMutation = useMutation({
     mutationFn: deleteAbsence,
     onSuccess: (_void, id) => {
-      const removed = absences.find((absence) => absence.id === id);
-      queryClient.invalidateQueries({ queryKey: ["absences"] });
+      const removed = absences.find((a) => a.id === id);
+      qc.invalidateQueries({ queryKey: ["absences"] });
       if (removed) {
-        setHistory((current) => [
-          { 
-            id: Date.now(), 
-            action: "deleted", 
-            absence: removed, 
-            timestamp: new Date().toISOString() 
+        setHistory((h) => [
+          {
+            id: Date.now(),
+            action: "supprimée",
+            absence: removed,
+            timestamp: new Date().toISOString(),
           },
-          ...current,
+          ...h,
         ]);
       }
+      toast.success("Absence supprimée.");
     },
+    onError: () => toast.error("Impossible de supprimer l'absence."),
   });
 
-  const sortedAbsences = useMemo(
-    () =>
-      [...absences].sort(
-        (left, right) => new Date(right.date).getTime() - new Date(left.date).getTime(),
-      ),
-    [absences],
-  );
-
-  const filteredAbsences = useMemo(() => {
-    const q = query.trim().toLowerCase();
-
-    return sortedAbsences.filter((absence) => {
-      return (
-        !q ||
-        absence.employee_name.toLowerCase().includes(q) ||
-        absence.motif.toLowerCase().includes(q) ||
-        absence.date.includes(q)
-      );
-    });
-  }, [sortedAbsences, query]);
-
-  const recentHistory = useMemo(() => {
-    return [...history].sort((left, right) => {
-      return new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime();
-    });
-  }, [history]);
-
-  const deletedCount = history.filter((entry) => entry.action === "deleted").length;
-  const thisWeekCount = absences.filter((absence) => isThisWeek(absence.date)).length;
-
-  function addAbsence(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError(null);
-
-    const formData = new FormData(event.currentTarget);
-    const employee = Number(formData.get("employee"));
-    const date = String(formData.get("date") ?? "");
-    const motif = String(formData.get("motif") ?? "").trim();
-
-    if (!employee || !date || !motif) {
-      setFormError("Employee, date, and reason are required.");
-      return;
-    }
-
-    createMutation.mutate({ employee, date, motif });
+  function handleCreated(absence: ApiAbsence) {
+    setHistory((h) => [
+      {
+        id: Date.now(),
+        action: "enregistrée",
+        absence,
+        timestamp: new Date().toISOString(),
+      },
+      ...h,
+    ]);
   }
 
-  const isLoading = absencesQuery.isLoading || employeesQuery.isLoading;
-  const loadError = absencesQuery.error || employeesQuery.error;
+  // ── Dérivations ────────────────────────────────────────────────────────────
+  const sorted = useMemo(
+    () =>
+      [...absences].sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      ),
+    [absences]
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sorted.filter(
+      (a) =>
+        !q ||
+        a.employee_name.toLowerCase().includes(q) ||
+        a.motif.toLowerCase().includes(q) ||
+        a.date.includes(q)
+    );
+  }, [sorted, query]);
+
+  const thisWeekCount = absences.filter((a) => isThisWeek(a.date)).length;
+  const deletedCount = history.filter((e) => e.action === "supprimée").length;
+
+  const isLoading = absencesQuery.isLoading;
+  const hasError = absencesQuery.isError;
 
   return (
     <AppShell
       title="Absences"
-      actions={
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4" /> Add Absence
-            </Button>
-          </DialogTrigger>
-
-          <DialogContent>
-            <form onSubmit={addAbsence} className="space-y-5">
-              <DialogHeader>
-                <DialogTitle>Register absence</DialogTitle>
-              </DialogHeader>
-
-              {formError && (
-                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {formError}
-                </div>
-              )}
-
-              <div className="space-y-4">
-                {/* ✅ Employee Dropdown */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="employee">Employee</Label>
-                  <Select name="employee" required>
-                    <SelectTrigger id="employee">
-                      <SelectValue placeholder="Select employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {employees.map((employee) => (
-                        <SelectItem key={employee.id} value={String(employee.id)}>
-                          {employee.first_name} {employee.last_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="date">Date</Label>
-                  <Input id="date" name="date" type="date" required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="motif">Reason / note</Label>
-                  <Textarea id="motif" name="motif" placeholder="Reason / note" required />
-                </div>
-              </div>
-
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Registering..." : "Register"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      }
+      actions={<NewAbsenceDialog onCreated={handleCreated} />}
     >
       <div className="space-y-4">
+        {/* ── Cartes résumé ── */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Card>
             <CardContent className="flex items-center gap-3 p-4">
@@ -273,20 +299,28 @@ function AbsencesPage() {
                 <Users className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-2xl font-semibold leading-none">{absences.length}</p>
-                <p className="text-xs text-muted-foreground">Active absences</p>
+                <p className="text-2xl font-semibold leading-none">
+                  {absences.length}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Total absences enregistrées
+                </p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardContent className="flex items-center gap-3 p-4">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warning/10 text-warning">
                 <CalendarDays className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-2xl font-semibold leading-none">{thisWeekCount}</p>
-                <p className="text-xs text-muted-foreground">This week</p>
+                <p className="text-2xl font-semibold leading-none">
+                  {thisWeekCount}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Cette semaine
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -297,24 +331,30 @@ function AbsencesPage() {
                 <Trash2 className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-2xl font-semibold leading-none">{deletedCount}</p>
-                <p className="text-xs text-muted-foreground">Deleted this session</p>
+                <p className="text-2xl font-semibold leading-none">
+                  {deletedCount}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Supprimées cette session
+                </p>
               </div>
             </CardContent>
           </Card>
         </div>
 
+        {/* ── Contenu principal ── */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {/* Tableau absences */}
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-base">Absences</CardTitle>
+                <CardTitle className="text-base">Liste des absences</CardTitle>
                 <div className="relative w-full max-w-xs">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search absence..."
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Rechercher employé, motif…"
                     className="pl-9"
                   />
                 </div>
@@ -322,35 +362,32 @@ function AbsencesPage() {
             </CardHeader>
 
             <CardContent className="p-4 pt-2">
-              {/* ✅ Loading State */}
               {isLoading && (
                 <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading absences...
+                  <Loader2 className="h-4 w-4 animate-spin" /> Chargement des absences…
                 </div>
               )}
 
-              {/* ✅ Error State */}
-              {!isLoading && loadError && (
+              {!isLoading && hasError && (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                  Couldn't load absences. Please refresh the page.
+                  Impossible de charger les absences. Veuillez actualiser la page.
                 </div>
               )}
 
-              {/* ✅ Data Table */}
-              {!isLoading && !loadError && (
+              {!isLoading && !hasError && (
                 <div className="overflow-hidden rounded-md border">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Employee</TableHead>
+                        <TableHead>Employé</TableHead>
                         <TableHead>Date</TableHead>
-                        <TableHead>Reason</TableHead>
+                        <TableHead>Motif</TableHead>
                         <TableHead className="w-12" />
                       </TableRow>
                     </TableHeader>
 
                     <TableBody>
-                      {filteredAbsences.map((absence) => (
+                      {filtered.map((absence) => (
                         <TableRow key={absence.id}>
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2">
@@ -363,7 +400,10 @@ function AbsencesPage() {
                           <TableCell className="whitespace-nowrap text-muted-foreground">
                             {formatDate(absence.date)}
                           </TableCell>
-                          <TableCell className="max-w-xs truncate text-muted-foreground">
+                          <TableCell
+                            className="max-w-xs truncate text-muted-foreground"
+                            title={absence.motif}
+                          >
                             {absence.motif}
                           </TableCell>
                           <TableCell>
@@ -372,7 +412,7 @@ function AbsencesPage() {
                               size="icon"
                               disabled={deleteMutation.isPending}
                               onClick={() => deleteMutation.mutate(absence.id)}
-                              aria-label={`Delete absence for ${absence.employee_name}`}
+                              title={`Supprimer l'absence de ${absence.employee_name}`}
                             >
                               <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
@@ -380,18 +420,20 @@ function AbsencesPage() {
                         </TableRow>
                       ))}
 
-                      {filteredAbsences.length === 0 ? (
+                      {filtered.length === 0 && (
                         <TableRow>
                           <TableCell colSpan={4} className="h-32">
                             <div className="flex flex-col items-center justify-center gap-2 text-center text-muted-foreground">
                               <UserRound className="h-6 w-6" />
                               <p className="text-sm">
-                                {query ? "No absences match your search." : "No absences recorded yet."}
+                                {query
+                                  ? "Aucune absence ne correspond à la recherche."
+                                  : "Aucune absence enregistrée."}
                               </p>
                             </div>
                           </TableCell>
                         </TableRow>
-                      ) : null}
+                      )}
                     </TableBody>
                   </Table>
                 </div>
@@ -399,29 +441,36 @@ function AbsencesPage() {
             </CardContent>
           </Card>
 
+          {/* Historique de session */}
           <Card className="lg:col-span-1">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
-                <Clock3 className="h-4 w-4" /> History
+                <Clock3 className="h-4 w-4" /> Activité de la session
               </CardTitle>
             </CardHeader>
             <CardContent className="max-h-[520px] space-y-3 overflow-y-auto p-4 pt-0">
-              {recentHistory.length === 0 ? (
+              {history.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  No activity yet this session.
+                  Aucune activité pour l'instant.
                 </p>
               ) : (
-                recentHistory.map((entry) => (
+                history.map((entry) => (
                   <div key={entry.id} className="rounded-md border p-3">
                     <div className="flex items-center justify-between gap-2">
-                      <Badge variant={entry.action === "registered" ? "default" : "secondary"}>
-                        {entry.action === "registered" ? "Registered" : "Deleted"}
+                      <Badge
+                        variant={
+                          entry.action === "enregistrée" ? "default" : "secondary"
+                        }
+                      >
+                        {entry.action === "enregistrée" ? "Enregistrée" : "Supprimée"}
                       </Badge>
                       <p className="text-xs text-muted-foreground">
                         {formatTimestamp(entry.timestamp)}
                       </p>
                     </div>
-                    <p className="mt-2 text-sm font-medium">{entry.absence.employee_name}</p>
+                    <p className="mt-2 text-sm font-medium">
+                      {entry.absence.employee_name}
+                    </p>
                     <p className="text-xs text-muted-foreground">
                       {entry.absence.motif} • {formatDate(entry.absence.date)}
                     </p>

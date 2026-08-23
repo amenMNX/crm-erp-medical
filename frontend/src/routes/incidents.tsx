@@ -36,8 +36,14 @@ import {
   deleteIncident,
   fetchIncidents,
   updateIncident,
+  type ApiIncident,
 } from "@/lib/incidents-api";
-import { fetchAgents, fetchPatients } from "@/lib/tickets-api";
+import { 
+  fetchAgents, 
+  fetchPatients,
+  type ApiAgent,
+  type ApiPatient,
+} from "@/lib/tickets-api";
 import type { TicketPriority, TicketStatus } from "@/lib/domain";
 
 export const Route = createFileRoute("/incidents")({
@@ -61,13 +67,41 @@ function IncidentsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [open, setOpen] = useState(false);
 
-  const incidentsQuery = useQuery({ queryKey: ["incidents"], queryFn: fetchIncidents });
-  const patientsQuery = useQuery({ queryKey: ["patients"], queryFn: fetchPatients });
-  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: fetchAgents });
+  // Use proper types and error handling
+  const incidentsQuery = useQuery({ 
+    queryKey: ["incidents"], 
+    queryFn: fetchIncidents,
+    retry: 1,
+    staleTime: 1000 * 60, // 1 minute
+  });
+  
+  const patientsQuery = useQuery({ 
+    queryKey: ["patients"], 
+    queryFn: fetchPatients,
+    retry: 1,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+  
+  const agentsQuery = useQuery({ 
+    queryKey: ["agents"], 
+    queryFn: fetchAgents,
+    retry: 1,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
 
-  const incidents = incidentsQuery.data ?? [];
-  const patients = patientsQuery.data ?? [];
-  const agents = agentsQuery.data ?? [];
+  // Properly typed data with fallbacks
+  const incidents = (incidentsQuery.data ?? []) as ApiIncident[];
+  const patients = (patientsQuery.data ?? []) as ApiPatient[];
+  const agents = (agentsQuery.data ?? []) as ApiAgent[];
+
+  // Check for errors
+  const hasError = incidentsQuery.isError || patientsQuery.isError || agentsQuery.isError;
+  const isLoading = incidentsQuery.isLoading || patientsQuery.isLoading || agentsQuery.isLoading;
+
+  // Log any errors to console for debugging
+  if (incidentsQuery.error) console.error("Incidents error:", incidentsQuery.error);
+  if (patientsQuery.error) console.error("Patients error:", patientsQuery.error);
+  if (agentsQuery.error) console.error("Agents error:", agentsQuery.error);
 
   const createMutation = useMutation({
     mutationFn: createIncident,
@@ -94,10 +128,10 @@ function IncidentsPage() {
     return incidents.filter((incident) => {
       const matchesQuery =
         !q ||
-        incident.numero.toLowerCase().includes(q) ||
-        incident.titre.toLowerCase().includes(q) ||
-        incident.description.toLowerCase().includes(q) ||
-        incident.equipment_or_location.toLowerCase().includes(q) ||
+        incident.numero?.toLowerCase().includes(q) ||
+        incident.titre?.toLowerCase().includes(q) ||
+        incident.description?.toLowerCase().includes(q) ||
+        incident.equipment_or_location?.toLowerCase().includes(q) ||
         (incident.patient_name ?? "").toLowerCase().includes(q);
 
       const matchesStatus = statusFilter === "all" || incident.statut === statusFilter;
@@ -125,13 +159,32 @@ function IncidentsPage() {
       priorite,
       statut: "Nouveau",
       patient: patientValue ? Number(patientValue) : null,
-      equipment_or_location,
+      equipment_or_location: equipment_or_location || undefined,
       agents: agentValue ? [Number(agentValue)] : [],
     });
   }
 
-  const isLoading = incidentsQuery.isLoading || patientsQuery.isLoading || agentsQuery.isLoading;
-  const loadError = incidentsQuery.error || patientsQuery.error || agentsQuery.error;
+  // Show error state
+  if (hasError) {
+    return (
+      <AppShell title="Incidents">
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex flex-col items-center justify-center gap-4 py-8">
+              <AlertTriangle className="h-12 w-12 text-destructive" />
+              <h3 className="text-lg font-semibold">Unable to load incidents</h3>
+              <p className="text-sm text-muted-foreground text-center max-w-md">
+                There was a problem loading the data. Please try refreshing the page.
+              </p>
+              <Button onClick={() => window.location.reload()}>
+                Refresh Page
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell
@@ -172,11 +225,15 @@ function IncidentsPage() {
                   <SelectValue placeholder="Related patient optional" />
                 </SelectTrigger>
                 <SelectContent>
-                  {patients.map((patient) => (
-                    <SelectItem key={patient.id} value={String(patient.id)}>
-                      {patient.first_name} {patient.last_name}
-                    </SelectItem>
-                  ))}
+                  {patients.length > 0 ? (
+                    patients.map((patient) => (
+                      <SelectItem key={patient.id} value={String(patient.id)}>
+                        {patient.first_name} {patient.last_name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="" disabled>No patients available</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
 
@@ -185,11 +242,15 @@ function IncidentsPage() {
                   <SelectValue placeholder="Assign agent optional" />
                 </SelectTrigger>
                 <SelectContent>
-                  {agents.map((agent) => (
-                    <SelectItem key={agent.id} value={String(agent.id)}>
-                      {agent.name}
-                    </SelectItem>
-                  ))}
+                  {agents.length > 0 ? (
+                    agents.map((agent) => (
+                      <SelectItem key={agent.id} value={String(agent.id)}>
+                        {agent.name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="" disabled>No agents available</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
 
@@ -240,13 +301,7 @@ function IncidentsPage() {
             </div>
           )}
 
-          {!isLoading && loadError && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              Couldn't load incidents. Please refresh the page.
-            </div>
-          )}
-
-          {!isLoading && !loadError && (
+          {!isLoading && !hasError && (
             <div className="overflow-hidden rounded-md border">
               <Table>
                 <TableHeader>
@@ -302,9 +357,17 @@ function IncidentsPage() {
                           variant="ghost"
                           size="icon"
                           disabled={deleteMutation.isPending}
-                          onClick={() => deleteMutation.mutate(incident.id)}
+                          onClick={() => {
+                            if (confirm("Are you sure you want to delete this incident?")) {
+                              deleteMutation.mutate(incident.id);
+                            }
+                          }}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          {deleteMutation.isPending && deleteMutation.variables === incident.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -313,7 +376,22 @@ function IncidentsPage() {
                   {filteredIncidents.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
-                        No incidents match these filters.
+                        {query || statusFilter !== "all" ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <p>No incidents match these filters.</p>
+                            <Button 
+                              variant="link" 
+                              onClick={() => {
+                                setQuery("");
+                                setStatusFilter("all");
+                              }}
+                            >
+                              Clear filters
+                            </Button>
+                          </div>
+                        ) : (
+                          "No incidents found."
+                        )}
                       </TableCell>
                     </TableRow>
                   )}

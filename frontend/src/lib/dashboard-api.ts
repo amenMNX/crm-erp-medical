@@ -1,4 +1,3 @@
-// /tmp/project/src/lib/dashboard-api.ts
 import { apiFetch } from "./api";
 
 export type ApiDashboardSummary = {
@@ -22,6 +21,8 @@ export type ApiDashboardSummary = {
   cnam_pending_count?: number;
   cnam_approved_count?: number;
   cnam_reimbursed_count?: number;
+  outgoing_total?: string;
+  outgoing_this_month?: string;
 
   // Medical
   appointments_count?: number;
@@ -54,4 +55,35 @@ export type ApiDashboardSummary = {
 
 export async function fetchDashboardSummary(): Promise<ApiDashboardSummary> {
   return apiFetch<ApiDashboardSummary>("/dashboard/summary/");
+}
+// ── KPI Dashboard ─────────────────────────────────────────────────────────────
+
+export type KpiStatus = "green" | "orange" | "red";
+export type KpiFmt = "%" | "count" | "currency" | "number";
+
+export interface ApiKpi {
+  label: string;
+  value: number;
+  unit: string;
+  status: KpiStatus;
+  target_green: number | null;
+  target_orange: number | null;
+  description: string;
+  fmt: KpiFmt;
+}
+
+export interface ApiKpiDimension {
+  id: string;
+  label: string;
+  kpis: ApiKpi[];
+}
+
+export interface ApiKpiDashboard {
+  generated_at: string;
+  period: string;
+  dimensions: ApiKpiDimension[];
+}
+
+export async function fetchKpiDashboard(): Promise<ApiKpiDashboard> {
+  return apiFetch<ApiKpiDashboard>("/dashboard/kpi/");
 }

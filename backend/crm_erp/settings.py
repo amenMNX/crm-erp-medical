@@ -32,11 +32,19 @@ if not DEBUG and SECRET_KEY == _SECRET_KEY_DEFAULT:
         "Then set DJANGO_SECRET_KEY=<generated_value> in your .env file."
     )
 
+# ALLOWED_HOSTS - Base configuration
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
     if host.strip()
 ]
+
+# Add ngrok domain dynamically if provided
+NGROK_DOMAIN = os.getenv("NGROK_DOMAIN", "")
+if NGROK_DOMAIN:
+    ALLOWED_HOSTS.append(NGROK_DOMAIN)
+    ALLOWED_HOSTS.append(f"*.{NGROK_DOMAIN}")
+    print(f"✅ Ngrok domain added to ALLOWED_HOSTS: {NGROK_DOMAIN}")
 
 # Application definition
 INSTALLED_APPS = [
@@ -62,6 +70,7 @@ INSTALLED_APPS = [
     'apps.messaging',
     'apps.audit',
     "apps.payroll",
+    "apps.stocks",
 ]
 
 MIDDLEWARE = [
@@ -111,6 +120,7 @@ DATABASES = {
         'PORT': os.getenv('DB_PORT', ''),
     }
 }
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -128,10 +138,10 @@ USE_TZ = True
 # Static files
 STATIC_URL = 'static/'
 
-# CORS
-# Default is False — only the origins listed in CORS_ALLOWED_ORIGINS are accepted.
-# Set DJANGO_CORS_ALLOW_ALL_ORIGINS=True only for local dev if needed; never in production.
+# CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = os.getenv("DJANGO_CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
+
+# Base CORS allowed origins from environment
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -140,6 +150,8 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+# Base CSRF trusted origins from environment
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -149,7 +161,37 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
+# Add ngrok origins dynamically
+if NGROK_DOMAIN:
+    CORS_ALLOWED_ORIGINS.append(f"https://{NGROK_DOMAIN}")
+    CORS_ALLOWED_ORIGINS.append(f"https://*.{NGROK_DOMAIN}")
+    CSRF_TRUSTED_ORIGINS.append(f"https://{NGROK_DOMAIN}")
+    CSRF_TRUSTED_ORIGINS.append(f"https://*.{NGROK_DOMAIN}")
+    print(f"✅ Ngrok origins added to CORS and CSRF: {NGROK_DOMAIN}")
+
 CORS_ALLOW_CREDENTIALS = True
+
+# Additional CORS settings for better compatibility
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # Email
 EMAIL_BACKEND = os.getenv(
@@ -222,6 +264,7 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
+# JWT Cookie Settings
 JWT_AUTH_COOKIE = 'access_token'
 JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
 JWT_AUTH_SAMESITE = 'Lax'
@@ -229,3 +272,44 @@ JWT_AUTH_SECURE = False
 JWT_AUTH_HTTPONLY = True
 JWT_AUTH_PATH = '/'
 JWT_AUTH_DOMAIN = None
+
+# Override JWT cookie settings for ngrok (HTTPS)
+if NGROK_DOMAIN:
+    JWT_AUTH_SECURE = True
+    JWT_AUTH_SAMESITE = 'None'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    # Tell Django to trust the X-Forwarded-Proto header from nginx.
+    # Without this, Django sees requests as HTTP (nginx internal traffic)
+    # even though ngrok is serving them over HTTPS, causing cookie/CSRF
+    # rejections and the 403s you're seeing.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    USE_X_FORWARDED_HOST = True
+    print(f"✅ Secure cookies enabled for ngrok: {NGROK_DOMAIN}")
+    
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Logging configuration for debugging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+        'django.security': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+        'corsheaders': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    },
+}

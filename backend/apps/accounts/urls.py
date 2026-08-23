@@ -1,3 +1,4 @@
+# apps/accounts/urls.py
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .views import (
@@ -11,11 +12,15 @@ from .views import (
     RegisterView,
     TokenRefreshView,
     UserViewSet,
+    RolePermissionViewSet,
+    AllRolePermissionsView,
+    SuperAdminCheckView,  
 )
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
 router.register("custom-roles", CustomRoleViewSet, basename="custom-role")
+router.register("role-permissions", RolePermissionViewSet, basename="role-permission")
 
 urlpatterns = [
     path("me/", CurrentUserView.as_view(), name="current-user"),
@@ -30,5 +35,7 @@ urlpatterns = [
         PasswordResetConfirmView.as_view(),
         name="password-reset-confirm",
     ),
+    path("all-role-permissions/", AllRolePermissionsView.as_view(), name="all-role-permissions"),
+    path('super-admin/check/', SuperAdminCheckView.as_view(), name='super-admin-check'),
     path("", include(router.urls)),
 ]

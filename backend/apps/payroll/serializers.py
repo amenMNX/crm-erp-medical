@@ -99,8 +99,8 @@ class PayrollSerializer(serializers.ModelSerializer):
 
 class PayrollBatchSerializer(serializers.ModelSerializer):
     payrolls = PayrollSerializer(many=True, read_only=True)
-    generated_by_name = serializers.CharField(source="generated_by.username", read_only=True)
-    approved_by_name = serializers.CharField(source="approved_by.username", read_only=True)
+    generated_by_name = serializers.CharField(source="generated_by.username", read_only=True, default=None)
+    approved_by_name = serializers.CharField(source="approved_by.username", read_only=True, default=None)
 
     class Meta:
         model = PayrollBatch

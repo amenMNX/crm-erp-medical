@@ -45,6 +45,10 @@ class Invoice(models.Model):
 
     class Meta:
         ordering = ["-issue_date", "-created_at"]
+        indexes = [
+            models.Index(fields=["status", "due_date"]),
+            models.Index(fields=["patient", "status"]),
+        ]
 
     @property
     def paid_amount(self):
@@ -54,6 +58,50 @@ class Invoice(models.Model):
     def balance_due(self):
         balance = Decimal(str(self.total_amount)) - self.paid_amount
         return max(balance, Decimal("0.00"))
+
+    @property
+    def days_overdue(self):
+        """Jours de retard depuis la date d'échéance. 0 si payée/annulée ou pas encore échue."""
+        if self.status in (self.Status.PAID, self.Status.CANCELLED) or not self.due_date:
+            return 0
+        delta = (timezone.now().date() - self.due_date).days
+        return max(delta, 0)
+
+    @property
+    def dunning_stage(self):
+        """Palier de relance selon l'ancienneté du retard (J+30/60/90 → huissier)."""
+        days = self.days_overdue
+        if days <= 0:
+            return None
+        if days < 30:
+            return "pre_relance"
+        if days < 60:
+            return "j30"
+        if days < 90:
+            return "j60"
+        return "j90"
+
+    @property
+    def doubtful_provision_rate(self):
+        """Taux de provision pour créance douteuse selon le palier d'ancienneté."""
+        stage = self.dunning_stage
+        return {
+            None: Decimal("0.00"),
+            "pre_relance": Decimal("0.00"),
+            "j30": Decimal("0.25"),
+            "j60": Decimal("0.50"),  # Fixed from j50 to j60
+            "j90": Decimal("1.00"),
+        }.get(stage, Decimal("0.00"))
+
+    @property
+    def doubtful_provision_amount(self):
+        """Montant provisionné = solde dû × taux de provision du palier."""
+        return round(self.balance_due * self.doubtful_provision_rate, 2)
+
+    @property
+    def current_dunning_action(self):
+        """Returns the most recent dunning action for this invoice."""
+        return self.dunning_actions.first()
 
     def refresh_payment_status(self):
         if self.status == self.Status.CANCELLED:
@@ -105,6 +153,7 @@ class Invoice(models.Model):
     def __str__(self):
         return self.invoice_number
 
+
 class InvoiceLineItem(models.Model):
     invoice = models.ForeignKey(
         Invoice,
@@ -155,6 +204,7 @@ class InvoiceLineItem(models.Model):
 
     def __str__(self):
         return f"{self.invoice.invoice_number} - {self.description}"
+
 
 class Payment(models.Model):
     class Method(models.TextChoices):
@@ -249,6 +299,7 @@ class CNAMClaim(models.Model):
     def __str__(self):
         return f"CNAM {self.cnam_number} - {self.patient}"
 
+
 class SubscriptionPlan(models.Model):
     """A named subscription tier (e.g. 'Forfait Standard', 'Forfait VIP').
 
@@ -332,6 +383,7 @@ class SubscriptionChange(models.Model):
         new = self.new_plan.name if self.new_plan else "None"
         return f"{self.patient} | {prev} → {new} ({self.effective_date})"
 
+
 class OutgoingPayment(models.Model):
     """
     Records a cash outflow that is NOT linked to a patient invoice.
@@ -374,3 +426,67 @@ class OutgoingPayment(models.Model):
 
     def __str__(self):
         return f"{self.reference} — {self.amount} ({self.get_category_display()})"
+
+
+class DunningAction(models.Model):
+    """
+    Journal des relances de recouvrement sur une facture impayée
+    (Contrats & Recouvrement — J+30/60/90, escalade huissier, frais 5%).
+    Chaque ligne est un événement immuable : envoi d'une relance ou
+    escalade. Le palier courant d'une facture se déduit de son
+    Invoice.dunning_stage (calculé sur due_date), pas de ce journal —
+    ce journal ne fait que tracer les actions réellement effectuées.
+    """
+
+    class Level(models.TextChoices):
+        RELANCE_J30 = "j30", "Relance J+30"
+        RELANCE_J60 = "j60", "Relance J+60"
+        RELANCE_J90 = "j90", "Relance J+90"
+        HUISSIER    = "huissier", "Mise en demeure / huissier"
+
+    class Method(models.TextChoices):
+        EMAIL   = "email",   "Email"
+        COURIER = "courier", "Courrier"
+        PHONE   = "phone",   "Téléphone"
+        HUISSIER = "huissier", "Huissier"
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="dunning_actions",
+    )
+    level = models.CharField(max_length=20, choices=Level.choices)
+    method = models.CharField(max_length=20, choices=Method.choices, default=Method.EMAIL)
+    action_date = models.DateField(default=timezone.now)
+    fee_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal("0.00"),
+        help_text="Frais d'escalade appliqués (5% du solde dû au passage huissier)",
+    )
+    notes = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dunning_actions_recorded",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-action_date", "-created_at"]
+
+    def clean(self):
+        if self.level == self.Level.HUISSIER:
+            if self.fee_amount < 0:
+                raise ValidationError({"fee_amount": "Huissier fees cannot be negative."})
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate fee for huissier if not provided
+        if self.level == self.Level.HUISSIER and not self.fee_amount:
+            self.fee_amount = round(self.invoice.balance_due * Decimal("0.05"), 2)
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.invoice.invoice_number} — {self.get_level_display()} ({self.action_date})"

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import CNAMClaim, Invoice, InvoiceLineItem, Payment, SubscriptionPlan, SubscriptionChange ,OutgoingPayment
+from .models import CNAMClaim, DunningAction, Invoice, InvoiceLineItem, Payment, SubscriptionPlan, SubscriptionChange, OutgoingPayment
 
 class InvoiceLineItemSerializer(serializers.ModelSerializer):
     class Meta:
@@ -20,9 +20,12 @@ class InvoiceLineItemSerializer(serializers.ModelSerializer):
         
 class InvoiceSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source="patient.__str__", read_only=True)
-    treatment_plan_name = serializers.CharField(source="treatment_plan.name", read_only=True)
+    treatment_plan_name = serializers.CharField(source="treatment_plan.name", read_only=True, default=None)
     paid_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     balance_due = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    days_overdue = serializers.IntegerField(read_only=True)
+    dunning_stage = serializers.CharField(read_only=True)
+    doubtful_provision_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     line_items = InvoiceLineItemSerializer(many=True, required=False)
 
     class Meta:
@@ -42,6 +45,9 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "total_amount",
             "paid_amount",
             "balance_due",
+            "days_overdue",
+            "dunning_stage",
+            "doubtful_provision_amount",
             "line_items",
             "notes",
             "created_at",
@@ -182,6 +188,49 @@ class SubscriptionChangeSerializer(serializers.ModelSerializer):
             validated_data["recorded_by"] = request.user
         return super().create(validated_data)
     
+class DunningActionSerializer(serializers.ModelSerializer):
+    invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+    patient_name   = serializers.CharField(source="invoice.patient.__str__", read_only=True)
+    level_display  = serializers.CharField(source="get_level_display", read_only=True)
+    method_display = serializers.CharField(source="get_method_display", read_only=True)
+    recorded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DunningAction
+        fields = [
+            "id",
+            "invoice",
+            "invoice_number",
+            "patient_name",
+            "level",
+            "level_display",
+            "method",
+            "method_display",
+            "action_date",
+            "fee_amount",
+            "notes",
+            "recorded_by",
+            "recorded_by_name",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id", "invoice_number", "patient_name",
+            "level_display", "method_display",
+            "recorded_by", "recorded_by_name", "created_at",
+        ]
+
+    def get_recorded_by_name(self, obj):
+        if obj.recorded_by is None:
+            return None
+        return obj.recorded_by.get_full_name() or obj.recorded_by.username
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            validated_data["recorded_by"] = request.user
+        return super().create(validated_data)
+
+
 class OutgoingPaymentSerializer(serializers.ModelSerializer):
     category_display = serializers.CharField(source="get_category_display", read_only=True)
     method_display   = serializers.CharField(source="get_method_display", read_only=True)

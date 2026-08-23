@@ -41,4 +41,5 @@ urlpatterns = [
     path("api/", include("apps.messaging.urls")),
     path("api/audit/", include("apps.audit.urls")),
     path("api/payroll/", include("apps.payroll.urls")),
+    path("api/stocks/",  include("apps.stocks.urls")),
 ]

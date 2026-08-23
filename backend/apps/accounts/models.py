@@ -1,3 +1,4 @@
+# apps/accounts/models.py
 from django.conf import settings
 from django.db import models
 
@@ -27,9 +28,19 @@ class UserProfile(models.Model):
     )
     phone = models.CharField(max_length=30, blank=True)
     department = models.CharField(max_length=100, blank=True)
+    
+    # ⭐ NEW FIELD
+    is_super_admin = models.BooleanField(
+        default=False,
+        help_text="Super Administrateur (accès total au système)"
+    )
 
     def __str__(self):
-        return f"{self.user.username} - {self.role}"
+        # ⭐ MODIFIED
+        role_display = self.get_role_display()
+        suffix = " 👑" if self.is_super_admin else ""
+        return f"{self.user.username} - {role_display}{suffix}"
+
 
 class CustomRole(models.Model):
     """User-defined roles created by admins in the Roles & Permissions screen.
@@ -61,3 +72,26 @@ class CustomRole(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class RolePermission(models.Model):
+    """Stores permissions for ALL roles (both built-in and custom).
+    
+    This works alongside CustomRole to provide a unified permission system.
+    Built-in roles get entries here so their permissions can be modified
+    through the UI. Custom roles also get entries here.
+    """
+    role_name = models.CharField(max_length=100, unique=True, db_index=True)
+    is_built_in = models.BooleanField(default=False)
+    write_permissions = models.JSONField(default=list, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["role_name"]
+        verbose_name = "Role Permission"
+        verbose_name_plural = "Role Permissions"
+
+    def __str__(self):
+        return f"{self.role_name} ({'built-in' if self.is_built_in else 'custom'})"

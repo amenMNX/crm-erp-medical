@@ -1,18 +1,26 @@
+# apps/hr/signals.py
 """
 HR cross-module signals.
-
-Registered in HrConfig.ready() (apps.py).
 """
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+from .models import Employee
+
+
+# NOTE: Role provisioning from job_title is handled entirely in
+# EmployeeSerializer._get_or_create_role_from_job_title() (called on create/update).
+# We do NOT duplicate that logic here to avoid race conditions and double-saves.
+
+
+@receiver(post_save, sender=Employee)
+def employee_created_or_updated(sender, instance, created, **kwargs):
+    """Log employee creation/update."""
+    pass
 
 
 @receiver(post_save, sender="hr.SalaryAdvance")
 def salary_advance_approved_payment(sender, instance, created, **kwargs):
-    """
-    When a SalaryAdvance transitions to 'Approuvée', create an OutgoingPayment
-    in the accounting module so the cash outflow is visible to accountants.
-    """
+    """When a SalaryAdvance transitions to 'Approuvée', create an OutgoingPayment."""
     from django.utils import timezone
     from apps.accounting.models import OutgoingPayment
 
@@ -24,6 +32,17 @@ def salary_advance_approved_payment(sender, instance, created, **kwargs):
     reference = f"AVS-{instance.pk:05d}"
 
     if OutgoingPayment.objects.filter(reference=reference).exists():
+        # Payment already created for this advance — this is a duplicate
+        # approval (e.g. admin set status back to Approuvée after Remboursée).
+        # Log a warning so it's visible in the server logs; do not create
+        # a second OutgoingPayment.
+        import logging
+        logging.getLogger(__name__).warning(
+            "Duplicate SalaryAdvance approval detected for advance pk=%s "
+            "(reference=%s). OutgoingPayment already exists — skipping.",
+            instance.pk,
+            reference,
+        )
         return
 
     OutgoingPayment.objects.create(
@@ -43,10 +62,7 @@ def salary_advance_approved_payment(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender="hr.Absence")
 def absence_alert_treatment_sessions(sender, instance, created, **kwargs):
-    """
-    When an Absence is recorded, notify admins and doctors if treatment
-    sessions are scheduled on that date.
-    """
+    """When an Absence is recorded, notify admins and doctors."""
     from django.contrib.auth.models import User
     from apps.crm.models import TreatmentSession
     from apps.messaging.models import Notification
@@ -74,24 +90,20 @@ def absence_alert_treatment_sessions(sender, instance, created, **kwargs):
     )
 
     recipients = User.objects.filter(
-        userprofile__role__in=["admin", "doctor"]
+        profile__role__in=["admin", "doctor"]
     ).distinct()
 
     for user in recipients:
         Notification.objects.get_or_create(
             recipient=user,
             title=title,
-            body=body,
-            defaults={"level": Notification.Level.WARNING},
+            defaults={"body": body, "level": Notification.Level.WARNING},
         )
 
 
 @receiver(post_save, sender="hr.LeaveRequest")
 def leave_approved_block_shifts(sender, instance, created, **kwargs):
-    """
-    When a LeaveRequest transitions to 'Acceptée', cancel all PLANNED shifts
-    for that employee within the leave period and notify admins.
-    """
+    """When a LeaveRequest transitions to 'Acceptée', cancel all PLANNED shifts."""
     from django.contrib.auth.models import User
     from apps.messaging.models import Notification
     from apps.hr.models import Shift
@@ -127,7 +139,7 @@ def leave_approved_block_shifts(sender, instance, created, **kwargs):
         f"{shift_list}."
     )
 
-    admins = User.objects.filter(userprofile__role="admin").distinct()
+    admins = User.objects.filter(profile__role="admin").distinct()
     for admin in admins:
         Notification.objects.get_or_create(
             recipient=admin,

@@ -20,19 +20,29 @@ import {
   UserCog,
   UserX,
   Wallet,
+  BookOpen,
   // Finance
   FileText,
   CreditCard,
   ShieldPlus,
   ArrowRightLeft,
+  Coins,
+  TrendingDown,
+  // Stock & Équipements
+  Package,
+  Wrench,
   // Reports & Analytics
   BarChart3,
+  FileBarChart,
   // Admin
   ShieldCheck,
   Settings,
   History,
   // Actions
   LogOut,
+  // Portal
+  Globe,
+  Zap,
 } from "lucide-react";
 import {
   Sidebar,
@@ -69,6 +79,7 @@ const menuSections = [
     items: [
       { title: "Patients", url: "/patients", icon: Users },
       { title: "Traitements", url: "/treatments", icon: ActivitySquare },
+      { title: "Protocoles", url: "/protocols", icon: Zap },
       { title: "Calendrier", url: "/calendar", icon: CalendarDays },
       { title: "Planning équipe", url: "/team-schedule", icon: CalendarFold },
     ],
@@ -94,6 +105,7 @@ const menuSections = [
       { title: "Congés", url: "/leaves", icon: CalendarDays },
       { title: "Absences", url: "/absences", icon: UserX },
       { title: "Avances sur salaire", url: "/salary-advances", icon: Wallet },
+      { title: "Formations & Compétences", url: "/formations", icon: BookOpen },
     ],
   },
 
@@ -105,6 +117,15 @@ const menuSections = [
       { title: "Paiements", url: "/payments", icon: CreditCard },
       { title: "CNAM", url: "/cnam", icon: ShieldPlus },
       { title: "Abonnements", url: "/abonnements", icon: ArrowRightLeft },
+      { title: "Paie", url: "/payroll", icon: Coins },
+      { title: "Recouvrement", url: "/recouvrement", icon: TrendingDown },
+    ],
+  },
+  {
+    label: "Stock et matériel",
+    items: [
+      { title: "Stocks médicaux", url: "/stocks", icon: Package },
+      { title: "Équipements", url: "/equipment", icon: Wrench },
     ],
   },
 
@@ -113,7 +134,7 @@ const menuSections = [
     label: "Analytique & Rapports",
     items: [
       { title: "Analytics", url: "/analytics", icon: BarChart3 },
-      { title: "Rapports", url: "/reports", icon: BarChart3 },
+      { title: "Rapports", url: "/reports", icon: FileBarChart },
     ],
   },
 
@@ -130,7 +151,15 @@ const menuSections = [
     items: [
       { title: "Paramètres", url: "/settings", icon: Settings },
     ],
-  }
+  },
+
+ /* // ── Portail Patient — accès staff ────────────────────────────────────────
+  {
+    label: "Portail Patient",
+    items: [
+      { title: "Espace Patient", url: "/patient/login", icon: Globe },
+    ],
+  },*/
 ]
   .map((section) => ({
     ...section,
@@ -162,8 +191,7 @@ export function AppSidebar() {
     .map((section) => ({
       ...section,
       items: section.items.filter(({ url }) =>
-        url === "/roles_permission" ||
-        url === "/historique" ? isAdmin : true
+        (url === "/roles_permission" || url === "/historique") ? isAdmin : true
       ),
     }))
     .filter((section) => section.items.length > 0);
@@ -191,13 +219,13 @@ export function AppSidebar() {
       <SidebarHeader className="border-b">
         <div className="flex items-center gap-2 px-2 py-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-sm">
-            CR
+            CM
           </div>
           <span className="text-lg font-semibold group-data-[collapsible=icon]:hidden">
-            RadioThérapie
+            Médical Center
           </span>
           <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-            v2.0
+            v1.0.0
           </span>
         </div>
       </SidebarHeader>
@@ -206,9 +234,8 @@ export function AppSidebar() {
       <SidebarContent>
         {visibleSections.map((section) => (
           <SidebarGroup key={section.label}>
-            <SidebarGroupLabel className="flex items-center gap-2">
-              {section.icon && <section.icon className="h-3.5 w-3.5" />}
-              <span>{section.label}</span>
+            <SidebarGroupLabel>
+              {section.label}
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
