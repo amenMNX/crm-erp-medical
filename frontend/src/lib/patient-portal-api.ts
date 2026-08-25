@@ -1,4 +1,8 @@
-const PORTAL_BASE = "/api/crm/portal";
+import { apiFetch } from "./api";
+
+// ─── Internal fetch wrapper for portal endpoints ──────────────────────────────
+// Uses apiFetch (which handles base URL, CSRF, cookies, token refresh)
+// instead of raw fetch, so ngrok / proxy / env vars all work automatically.
 
 async function portalFetch<T>(
   path: string,
@@ -8,27 +12,8 @@ async function portalFetch<T>(
   } = {}
 ): Promise<T> {
   const { method = "GET", body } = options;
-  const res = await fetch(`${PORTAL_BASE}${path}`, {
-    method,
-    credentials: "include", // cookie HttpOnly session
-    headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (res.status === 204) return undefined as T;
-
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-
-  if (!res.ok) {
-    const msg =
-      data?.detail ||
-      data?.non_field_errors?.[0] ||
-      Object.values(data ?? {})?.[0] ||
-      "Erreur serveur.";
-    throw new Error(String(msg));
-  }
-  return data as T;
+  // All portal routes live under /api/crm/portal/...
+  return apiFetch<T>(`/crm/portal${path}`, { method, body });
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -133,10 +118,15 @@ export interface PortalAuthUser {
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-export const portalLogin = (last_name: string, cin: string, medical_record_number: string) =>
-  portalFetch<PortalAuthUser>("/auth/login/", {
+export const portalLogin = (
+  last_name: string,
+  cin: string,
+  medical_record_number: string,
+  password?: string
+) =>
+  portalFetch<PortalAuthUser | { detail: string }>("/auth/login/", {
     method: "POST",
-    body: { last_name, cin, medical_record_number },
+    body: { last_name, cin, medical_record_number, ...(password ? { password } : {}) },
   });
 
 export const portalLogout = () =>

@@ -2,20 +2,31 @@
 from django.conf import settings
 from django.db import models
 
+class Department(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ["name"]
 
 class UserProfile(models.Model):
     class Role(models.TextChoices):
         ADMIN = "admin", "Admin"
         DOCTOR = "doctor", "Doctor"
-        RADIOTHERAPIST = "radiotherapist", "Radiotherapist"
         SECRETARY = "secretary", "Secretary"
         ACCOUNTANT = "accountant", "Accountant"
-        RESPONSABLE_HR = "hr", "HR"
+        HR = "hr", "HR"
         SUPPORT_CLIENT = "support_client", "Support Client"
         MANAGER = "manager", "Manager"
         RECEPTIONIST = "receptionist", "Receptionist"
         ASSISTANT = "assistant", "Assistant"
-
+        
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -27,7 +38,14 @@ class UserProfile(models.Model):
         default=Role.SECRETARY,
     )
     phone = models.CharField(max_length=30, blank=True)
-    department = models.CharField(max_length=100, blank=True)
+    department_old = models.CharField(max_length=100, blank=True)
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="users",
+    )
     
     # ⭐ NEW FIELD
     is_super_admin = models.BooleanField(
@@ -40,8 +58,8 @@ class UserProfile(models.Model):
         role_display = self.get_role_display()
         suffix = " 👑" if self.is_super_admin else ""
         return f"{self.user.username} - {role_display}{suffix}"
-
-
+        
+        
 class CustomRole(models.Model):
     """User-defined roles created by admins in the Roles & Permissions screen.
 

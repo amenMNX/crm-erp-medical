@@ -1,3 +1,5 @@
+# apps/accounts/authentication.py
+
 """
 Custom JWT authentication for cookies.
 """
@@ -27,6 +29,15 @@ class CookieJWTAuthentication(JWTAuthentication):
         try:
             validated_token = self.get_validated_token(token)
             user = self.get_user(validated_token)
+            
+            # ✅ ADD THIS - Validate user is still active and has a profile
+            if not user or not user.is_active:
+                return None
+            
+            # ✅ Check if profile exists
+            if not hasattr(user, 'profile'):
+                return None
+                
             return (user, validated_token)
         except (InvalidToken, TokenError):
             return None

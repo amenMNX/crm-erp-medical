@@ -450,8 +450,7 @@ class PortalLoginSerializer(serializers.Serializer):
     last_name = serializers.CharField()
     cin = serializers.CharField()
     medical_record_number = serializers.CharField()
-    password = serializers.CharField(write_only=True)
- 
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
  
 class PortalRegisterSerializer(serializers.Serializer):
     """Création du compte portail par le staff (secrétaire/admin)."""

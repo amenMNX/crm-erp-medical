@@ -2,9 +2,19 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
-from .models import CustomRole, UserProfile, RolePermission
+from .models import CustomRole, UserProfile, RolePermission ,Department
 
+class DepartmentSerializer(serializers.ModelSerializer):
+    user_count = serializers.SerializerMethodField()
 
+    class Meta:
+        model = Department
+        fields = ["id", "name", "description", "is_active", "user_count", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_user_count(self, obj):
+        return obj.users.count()
+    
 class UserProfileSerializer(serializers.ModelSerializer):
     role = serializers.CharField(max_length=30, required=False)
 

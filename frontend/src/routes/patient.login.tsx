@@ -14,17 +14,32 @@ function PatientLoginPage() {
   const [lastName, setLastName] = useState("");
   const [cin, setCin] = useState("");
   const [medicalRecordNumber, setMedicalRecordNumber] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [info, setInfo] = useState(""); // message "email envoyé"
   const [loading, setLoading] = useState(false);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setInfo("");
     setLoading(true);
 
     try {
-      await portalLogin(lastName.trim(), cin.trim(), medicalRecordNumber.trim());
-      navigate({ to: "/patient-portal/dashboard" });
+      const result = await portalLogin(
+        lastName.trim(),
+        cin.trim(),
+        medicalRecordNumber.trim(),
+        password.trim() || undefined
+      );
+
+      // Cas 2 : pas de password → backend a envoyé un email
+      if ("detail" in result) {
+        setInfo(result.detail as string);
+      } else {
+        // Cas 1 : connexion réussie
+        navigate({ to: "/patient-portal/dashboard" });
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erreur de connexion.");
     } finally {
@@ -40,11 +55,13 @@ function PatientLoginPage() {
             CR
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Espace Patient</h1>
-          <p className="text-sm text-gray-500 mt-1">Centre de Radiotherapie</p>
+          <p className="text-sm text-gray-500 mt-1">Centre de Radiothérapie</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border p-8">
-          <h2 className="text-lg font-semibold text-gray-800 mb-6">Connexion a votre espace</h2>
+          <h2 className="text-lg font-semibold text-gray-800 mb-6">
+            Connexion à votre espace
+          </h2>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
@@ -75,7 +92,7 @@ function PatientLoginPage() {
             </div>
 
             <div>
-              <Label htmlFor="medical-record-number">Numero de dossier medical</Label>
+              <Label htmlFor="medical-record-number">Numéro de dossier médical</Label>
               <Input
                 id="medical-record-number"
                 type="text"
@@ -87,9 +104,33 @@ function PatientLoginPage() {
               />
             </div>
 
+            <div>
+              <Label htmlFor="password">
+                Mot de passe{" "}
+                <span className="text-xs text-gray-400 font-normal">
+                  (laisser vide pour recevoir un mot de passe par email)
+                </span>
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                className="mt-1"
+              />
+            </div>
+
             {error && (
               <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
                 {error}
+              </div>
+            )}
+
+            {info && (
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-700">
+                {info}
               </div>
             )}
 
@@ -100,16 +141,16 @@ function PatientLoginPage() {
 
           <div className="mt-6 pt-4 border-t text-center">
             <p className="text-xs text-gray-400">
-              Vous etes du personnel medical ?{" "}
+              Vous êtes du personnel médical ?{" "}
               <Link to="/signin" className="text-primary hover:underline">
-                Acces staff
+                Accès staff
               </Link>
             </p>
           </div>
         </div>
 
         <p className="text-center text-xs text-gray-400 mt-6">
-          Session securisee - expiration automatique apres 30 min d'inactivite
+          Session sécurisée — expiration automatique après 30 min d'inactivité
         </p>
       </div>
     </div>

@@ -18,7 +18,7 @@ from rest_framework import filters
 from apps.audit.models import AuditLogEntry
 from apps.audit.utils import log_event
 
-from .models import CustomRole, RolePermission, UserProfile
+from .models import CustomRole, RolePermission, UserProfile, Department
 from .serializers import (
     CustomRoleSerializer,
     PasswordChangeSerializer,
@@ -27,11 +27,14 @@ from .serializers import (
     RegisterSerializer,
     UserSerializer,
     RolePermissionSerializer,
+    DepartmentSerializer,
 )
 from rest_framework.permissions import BasePermission
 
 # ⭐ NEW IMPORT
 from .permissions import IsSuperAdmin
+import hashlib  
+from django.contrib.sessions.models import Session 
 
 
 class IsSuperAdminOrStaff(BasePermission):
@@ -50,7 +53,7 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.select_related("profile").all().order_by("username")
     serializer_class = UserSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["is_active", "profile__role", "profile__department"]
+    filterset_fields = ["is_active", "profile__role", "profile__department"] 
     search_fields = ["username", "email", "first_name", "last_name", "profile__phone"]
     ordering_fields = ["username", "email", "first_name", "last_name", "date_joined"]
 
@@ -61,17 +64,38 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def partial_update(self, request, *args, **kwargs):
         """
-        Override PATCH so that when an admin changes a user's profile role,
-        the pre_save / post_save signals on UserProfile fire correctly and
-        the Employee auto-creation / sync logic in signals.py is triggered.
-
-        The default ModelViewSet.partial_update already saves the User and its
-        nested profile via UserSerializer, which does call profile.save() —
-        so the signals fire automatically. This override just adds a clear
-        comment and ensures we always use partial=True.
+        Override PATCH to invalidate sessions when role changes.
         """
+        user = self.get_object()
+        old_role = user.profile.role if hasattr(user, 'profile') else None
         kwargs["partial"] = True
-        return self.update(request, *args, **kwargs)
+        response = super().update(request, *args, **kwargs)
+        if 'profile' in request.data and 'role' in request.data['profile']:
+            new_role = request.data['profile']['role']
+            if old_role != new_role:
+                session_keys = []
+                for session in Session.objects.all():
+                    try:
+                        session_data = session.get_decoded()
+                        if session_data.get('_auth_user_id') == str(user.id):
+                            session_keys.append(session.session_key)
+                    except Exception:
+                        pass                
+                if session_keys:
+                    Session.objects.filter(session_key__in=session_keys).delete()
+                from apps.audit.models import AuditLogEntry
+                AuditLogEntry.objects.create(
+                    actor=request.user,
+                    action=AuditLogEntry.Action.USER_UPDATED,
+                    object_repr=f"User {user.username} role changed from {old_role} to {new_role}",
+                    changes={
+                        'user_id': user.id,
+                        'old_role': old_role,
+                        'new_role': new_role,
+                        'initiated_by': request.user.username
+                    }
+                )
+        return response
 
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()
@@ -86,6 +110,44 @@ class UserViewSet(viewsets.ModelViewSet):
         user.save(update_fields=["is_active"])
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+    
+class PermissionCheckView(APIView):
+    """
+    Check if user's permissions have changed since last check.
+    GET /api/accounts/permission-check/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        profile = getattr(user, 'profile', None)
+        
+        if not profile:
+            return Response({'changed': True, 'reason': 'No profile'})
+        
+        # Generate current hash based on user's role and permissions
+        from .models import RolePermission
+        current_hash = hashlib.md5(
+            f"{profile.role}_{profile.pk}_{profile.updated_at.isoformat()}".encode()
+        ).hexdigest()
+        
+        # Also check RolePermission updates
+        role_permission = RolePermission.objects.filter(
+            role_name__iexact=profile.role
+        ).first()
+        if role_permission:
+            current_hash = hashlib.md5(
+                f"{current_hash}_{role_permission.updated_at.isoformat()}".encode()
+            ).hexdigest()
+        
+        # Get last hash from request
+        last_hash = request.headers.get('X-Permission-Hash')
+        changed = last_hash != current_hash
+        
+        return Response({
+            'changed': changed,
+            'hash': current_hash if changed else None
+        })
 
 
 class CurrentUserView(APIView):
@@ -386,21 +448,46 @@ class CustomRoleViewSet(viewsets.ModelViewSet):
 
 
 def get_default_permissions_for_role(role_name: str) -> list[str]:
-    """Return default write permissions for a built-in role."""
+    """Return default write permissions for a built-in role.
+
+    IMPORTANT: these strings MUST exactly match the `moduleName` values used
+    in the frontend (src/components/app-shell.tsx ROUTE_MODULE_MAP and
+    src/routes/roles_permission.tsx MODULES).  They are stored as-is in
+    RolePermission.write_permissions and compared with a plain string
+    `includes()` check on the client — any mismatch silently denies access.
+    """
     default_map = {
         "admin": [
-            "Patients", "Appointments", "Complaints", "Tickets",
-            "Employees", "Leaves & Absences", "Invoices & Payments",
-            "CNAM Claims", "Protocols", "Stocks", "Formations", "Payroll"
+            "Patients", "Traitements", "Protocoles", "Calendrier", "Planning équipe",
+            "Tickets", "Incidents", "Réclamations", "Messages",
+            "Employés", "Congés", "Absences", "Avances sur salaire",
+            "Formations & Compétences",
+            "Factures", "Paiements", "CNAM", "Abonnements", "Paie", "Recouvrement",
+            "Stocks médicaux", "Équipements",
         ],
-        "doctor": ["Patients", "Appointments", "Complaints", "Protocols"],
-        "secretary": ["Patients", "Appointments", "Complaints", "Tickets", "Stocks"],
-        "accountant": ["Invoices & Payments", "CNAM Claims", "Payroll"],
-        "hr": ["Employees", "Leaves & Absences", "Formations", "Payroll"],
-        "support_client": ["Tickets"],
-        "manager": ["Patients", "Appointments", "Complaints", "Employees"],
-        "receptionist": ["Patients", "Appointments"],
-        "assistant": ["Patients", "Appointments"],
+        "doctor": [
+            "Patients", "Traitements", "Protocoles", "Calendrier", "Réclamations",
+        ],
+        "secretary": [
+            "Patients", "Calendrier", "Planning équipe",
+            "Tickets", "Réclamations",
+            "Stocks médicaux",
+        ],
+        "accountant": [
+            "Factures", "Paiements", "CNAM", "Abonnements", "Paie", "Recouvrement",
+        ],
+        "hr": [
+            "Employés", "Congés", "Absences", "Avances sur salaire",
+            "Formations & Compétences", "Paie",
+        ],
+        "support_client": ["Tickets", "Incidents", "Réclamations"],
+        "manager": [
+            "Patients", "Calendrier", "Planning équipe",
+            "Réclamations", "Incidents",
+            "Employés",
+        ],
+        "receptionist": ["Patients", "Calendrier"],
+        "assistant": ["Patients", "Calendrier"],
         "user": [],
     }
     return default_map.get(role_name, [])
@@ -540,6 +627,78 @@ class AllRolePermissionsView(APIView):
         return Response(serializer.data)
 
 
+
+
+class MyPermissionsView(APIView):
+    """
+    Return the write_permissions list for the currently authenticated user.
+    Used by the frontend to enforce navigation guards.
+    GET /api/accounts/my-permissions/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Superusers and staff: full access — return sentinel value
+        if user.is_superuser :
+            return Response({
+                "role": "admin",
+                "is_admin": True,
+                "write_permissions": ["__all__"],
+            })
+
+        profile = getattr(user, "profile", None)
+        if not profile:
+            return Response({
+                "role": "user",
+                "is_admin": False,
+                "write_permissions": [],
+            })
+
+        role = profile.role or "user"
+
+        # Super admin flag
+        if getattr(profile, "is_super_admin", False):
+            return Response({
+                "role": role,
+                "is_admin": True,
+                "write_permissions": ["__all__"],
+            })
+
+        # Look up role permissions from DB
+        role_perm = RolePermission.objects.filter(
+            role_name__iexact=role
+        ).first()
+
+        write_permissions = []
+        if role_perm:
+            # Filter out noview: entries — the frontend only needs write_permissions
+            write_permissions = [
+                p for p in (role_perm.write_permissions or [])
+                if not p.startswith("noview:")
+            ]
+
+        # is_admin governs access to adminOnly routes (/roles_permission, /historique).
+        # A user is considered admin if they are:
+        #   • a Django superuser or staff member, OR
+        #   • assigned the built-in "admin" role via their UserProfile, OR
+        #   • flagged as super_admin on their profile.
+        # Checking only user.is_staff was wrong: custom admin users created through
+        # the UI have role="admin" on their profile but is_staff=False in Django.
+        is_admin = (
+            user.is_staff
+            or user.is_superuser
+            or role == "admin"
+            or getattr(profile, "is_super_admin", False)
+        )
+
+        return Response({
+            "role": role,
+            "is_admin": is_admin,
+            "write_permissions": write_permissions,
+        })
+
 # ⭐ NEW VIEW
 class SuperAdminCheckView(APIView):
     """Vue de test pour vérifier les droits Super Admin."""
@@ -555,3 +714,29 @@ class SuperAdminCheckView(APIView):
                 "email": request.user.email,
             }
         })
+        
+
+class DepartmentViewSet(viewsets.ModelViewSet):
+    """CRUD for departments (dynamic, admin only)."""
+    queryset = Department.objects.all().order_by("name")
+    serializer_class = DepartmentSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "created_at"]
+    ordering = ["name"]
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve"):
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAdminUser()]
+
+    def destroy(self, request, *args, **kwargs):
+        department = self.get_object()
+        if department.users.exists():
+            return Response(
+                {
+                    "detail": f"Cannot delete department '{department.name}' because it has {department.users.count()} users assigned."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)

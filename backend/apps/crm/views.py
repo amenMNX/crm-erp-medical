@@ -14,7 +14,8 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.utils import timezone
-
+from django.core.mail import send_mail
+from django.conf import settings
 from apps.accounts.permissions import ReadOnlyOrRole
 from apps.audit.mixins import AuditLoggingMixin
 from apps.audit.models import AuditLogEntry
@@ -78,6 +79,13 @@ from .serializers import (
     TreatmentProtocolListSerializer,
     DoseDeviationSerializer,
     MaintenanceLogSerializer,
+)
+from apps.accounts.permissions import (
+    CrmPermission, 
+    TicketPermission, 
+    IsAdminRole, 
+    IsSuperAdmin,
+    AdminOnlyPermission
 )
 from .apt_scheduling import book_slot, handle_cancellation, suggest_slots
 # =============================================================================
@@ -981,7 +989,7 @@ class TicketCommentViewSet(viewsets.ModelViewSet):
     """
     
     serializer_class = TicketCommentSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TicketPermission]
 
     def get_queryset(self):
         """
@@ -1077,7 +1085,6 @@ def _portal_required(func):
 # ─── 1. Authentification ──────────────────────────────────────────────────────
 
 class PortalLoginView(APIView):
-    """POST /api/portal/auth/login/ — AllowAny"""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -1087,7 +1094,9 @@ class PortalLoginView(APIView):
         last_name = ser.validated_data["last_name"].strip()
         cin = ser.validated_data["cin"].strip()
         medical_record_number = ser.validated_data["medical_record_number"].strip()
+        password = ser.validated_data.get("password", "").strip()
 
+        # 1. Vérifier que le patient existe
         try:
             patient = Patient.objects.get(
                 last_name__iexact=last_name,
@@ -1100,17 +1109,15 @@ class PortalLoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        # 2. Récupérer ou créer le compte portail
         account, created = PatientPortalAccount.objects.get_or_create(
             patient=patient,
             defaults={
-                "email": f"portal-{patient.id}@patient.local",
+                "email": patient.email or f"portal-{patient.id}@patient.local",
                 "password_hash": "",
                 "is_active": True,
             },
         )
-        if created:
-            account.set_password(secrets.token_urlsafe(24))
-            account.save(update_fields=["password_hash"])
 
         if account.is_locked:
             return Response(
@@ -1120,31 +1127,68 @@ class PortalLoginView(APIView):
 
         if not account.is_active:
             return Response(
-                {"detail": "Compte portail desactive."},
+                {"detail": "Compte portail désactivé."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        if not account.check_password(ser.validated_data["password"]):
-            account.record_failed_login()
+        # 3. Cas 1 — password fourni → on vérifie
+        if password:
+            if not account.check_password(password):
+                account.record_failed_login()
+                return Response(
+                    {"detail": "Mot de passe incorrect."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            # Password correct → connecter
+            return self._create_session(account, request)
+
+        # 4. Cas 2 — pas de password → envoyer par email si on a une vraie adresse
+        real_email = patient.email
+        if not real_email:
             return Response(
-                {"detail": "Identifiants patient incorrects."},
-                status=status.HTTP_401_UNAUTHORIZED,
+                {"detail": "Aucune adresse email associée à ce dossier. Contactez le secrétariat."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        account.record_successful_login()
-        ip = request.META.get("REMOTE_ADDR")
-        ua = request.META.get("HTTP_USER_AGENT", "")
-        session = PatientPortalSession.create_for(account, ip=ip, ua=ua)
+        # Générer un nouveau mot de passe temporaire
+        temp_password = secrets.token_urlsafe(10)  # ex: "aB3xK9mP2q"
+        account.set_password(temp_password)
+        account.email = real_email  # synchroniser l'email si besoin
+        account.save(update_fields=["password_hash", "email"])
 
-        response = Response(
-            {
-                "patient_id": account.patient.id,
-                "patient_name": f"{account.patient.first_name} {account.patient.last_name}",
-                "mrn": account.patient.medical_record_number,
-                "email": account.email,
-            }
+        send_mail(
+            subject="Votre accès à l'Espace Patient",
+            message=(
+                f"Bonjour {patient.first_name} {patient.last_name},\n\n"
+                f"Votre mot de passe temporaire pour l'Espace Patient est :\n\n"
+                f"    {temp_password}\n\n"
+                f"Connectez-vous avec votre nom de famille, CIN, numéro de dossier et ce mot de passe.\n"
+                f"Vous pourrez le changer depuis votre profil.\n\n"
+                f"Ce message a été généré automatiquement."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[real_email],
+            fail_silently=False,
         )
-        # Cookie HttpOnly — 30 min
+
+        return Response(
+            {"detail": "Un mot de passe temporaire a été envoyé à votre adresse email."},
+            status=status.HTTP_200_OK,
+        )
+
+    def _create_session(self, account, request):
+        account.record_successful_login()
+        session = PatientPortalSession.create_for(
+            account,
+            ip=request.META.get("REMOTE_ADDR"),
+            ua=request.META.get("HTTP_USER_AGENT", ""),
+        )
+        response = Response({
+            "patient_id": account.patient.id,
+            "patient_name": f"{account.patient.first_name} {account.patient.last_name}",
+            "mrn": account.patient.medical_record_number,
+            "email": account.email,
+        })
         response.set_cookie(
             PORTAL_SESSION_COOKIE,
             session.token,
@@ -1470,7 +1514,7 @@ class StaffReplyToPatientView(APIView):
     POST /api/crm/portal/staff-reply/
     Réservée au staff authentifié (agent, médecin, secrétaire).
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def post(self, request):
         ser = StaffReplySerializer(data=request.data)
@@ -1573,7 +1617,7 @@ class PortalRegisterView(APIView):
     POST /api/crm/portal/register/
     Réservé au staff authentifié (secrétaire/admin) pour créer un compte portail.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def post(self, request):
         ser = PortalRegisterSerializer(data=request.data)
@@ -1597,7 +1641,7 @@ class SmartSuggestView(APIView):
     POST /api/crm/appointments/smart-suggest/
     Retourne 3 créneaux optimaux scorés.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def post(self, request):
         from .serializers import SmartSuggestRequestSerializer
@@ -1649,7 +1693,7 @@ class SmartBookView(APIView):
     POST /api/crm/appointments/smart-book/
     Crée le RDV à partir d'un créneau sélectionné.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def post(self, request):
         from .serializers import SmartBookRequestSerializer
@@ -1730,7 +1774,7 @@ class AppointmentCancelView(APIView):
     POST /api/crm/appointments/<pk>/cancel/
     Annule un RDV et propose le créneau à la liste d'attente.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def post(self, request, pk):
         notified = handle_cancellation(pk)
@@ -1748,7 +1792,7 @@ class DoctorAvailabilityView(APIView):
     GET  /api/crm/doctors/<doctor_id>/availability/
     POST /api/crm/doctors/<doctor_id>/availability/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def get(self, request, doctor_id):
         from .serializers import DoctorAvailabilitySerializer
@@ -1769,7 +1813,7 @@ class DoctorAvailabilityDetailView(APIView):
     PATCH  /api/crm/doctors/availability/<pk>/
     DELETE /api/crm/doctors/availability/<pk>/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def _get(self, pk):
         try:
@@ -1801,7 +1845,7 @@ class PatientPreferencesView(APIView):
     GET /api/crm/patients/<patient_id>/scheduling-preferences/
     PUT /api/crm/patients/<patient_id>/scheduling-preferences/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def get(self, request, patient_id):
         from .serializers import PatientPreferencesSerializer
@@ -1825,7 +1869,7 @@ class WaitingListView(APIView):
     GET  /api/crm/waiting-list/
     POST /api/crm/waiting-list/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def get(self, request):
         from .serializers import WaitingListSerializer
@@ -1886,7 +1930,7 @@ class AppointmentExtensionView(APIView):
     GET   /api/crm/appointments/<pk>/extension/
     PATCH /api/crm/appointments/<pk>/extension/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
 
     def get(self, request, pk):
         from .serializers import AppointmentExtensionSerializer
@@ -1939,7 +1983,7 @@ class TreatmentProtocolViewSet(viewsets.ModelViewSet):
     POST   /api/crm/protocols/{id}/clone/   → nouvelle version
     GET    /api/crm/protocols/{id}/versions/ → toutes les versions de la lignée
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CrmPermission]
     queryset = TreatmentProtocol.objects.select_related(
         "created_by", "approved_by", "parent"
     ).prefetch_related("changelog__performed_by")
@@ -2171,7 +2215,7 @@ class DoseDeviationViewSet(viewsets.ModelViewSet):
     PATCH  /api/crm/dose-deviations/{id}/           → mettre à jour notes
     POST   /api/crm/dose-deviations/{id}/review/    → marquer comme relu
     """
-    permission_classes  = [IsAuthenticated]
+    permission_classes = [CrmPermission]
     serializer_class    = DoseDeviationSerializer
     queryset = DoseDeviation.objects.select_related(
         "session__patient", "protocol", "reviewed_by"

@@ -18,6 +18,8 @@ from .serializers import (
 
 class AccountingPermission(ReadOnlyOrRole):
     allowed_roles = ["admin", "accountant"]
+    # Must match the French name in RolePermission.write_permissions / frontend MODULES
+    module_label = "Factures"
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
@@ -111,7 +113,7 @@ class OutgoingPaymentViewSet(viewsets.ReadOnlyModelViewSet):
     """
     queryset = OutgoingPayment.objects.all()
     serializer_class = OutgoingPaymentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AccountingPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["category", "method"]
     search_fields = ["reference", "description"]
@@ -199,3 +201,150 @@ class InvoiceLineItemViewSet(viewsets.ModelViewSet):
     filterset_fields = ["invoice"]
     search_fields = ["description"]
     ordering_fields = ["created_at", "line_total"]
+
+
+# ── S8: General Ledger ViewSets ───────────────────────────────────────────────
+
+from django.db.models import Sum as DSum
+from .models import ChartOfAccount, Journal, JournalEntry, JournalLine
+from .serializers import (
+    ChartOfAccountSerializer, JournalSerializer,
+    JournalEntrySerializer, JournalEntryCreateSerializer, JournalLineSerializer,
+)
+
+
+class ChartOfAccountViewSet(viewsets.ModelViewSet):
+    serializer_class = ChartOfAccountSerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["account_type", "is_analytical", "is_active"]
+    search_fields = ["code", "name"]
+    ordering_fields = ["code"]
+
+    def get_queryset(self):
+        return ChartOfAccount.objects.filter(is_active=True).select_related("parent")
+
+    @action(detail=False, methods=["get"])
+    def tree(self, request):
+        def build(acct):
+            return {
+                "id": acct.id, "code": acct.code, "name": acct.name,
+                "account_type": acct.account_type,
+                "children": [build(c) for c in acct.children.filter(is_active=True)],
+            }
+        roots = ChartOfAccount.objects.filter(parent__isnull=True, is_active=True)
+        return Response([build(r) for r in roots])
+
+
+class JournalViewSet(viewsets.ModelViewSet):
+    queryset = Journal.objects.all()
+    serializer_class = JournalSerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["code", "name"]
+    ordering_fields = ["code"]
+
+
+class JournalEntryViewSet(viewsets.ModelViewSet):
+    serializer_class = JournalEntrySerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["journal", "status", "entry_date"]
+    search_fields = ["entry_number", "description", "reference"]
+    ordering_fields = ["entry_date", "created_at"]
+
+    def get_queryset(self):
+        return JournalEntry.objects.select_related(
+            "journal", "created_by", "validated_by"
+        ).prefetch_related("lines__account").all()
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return JournalEntryCreateSerializer
+        return JournalEntrySerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    @action(detail=True, methods=["post"], url_path="post-entry")
+    def post_entry(self, request, pk=None):
+        entry = self.get_object()
+        try:
+            entry.post(request.user)
+            return Response(JournalEntrySerializer(entry).data)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        entry = self.get_object()
+        if entry.status == JournalEntry.Status.POSTED:
+            return Response(
+                {"detail": "Une écriture validée ne peut pas être annulée directement."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        entry.cancel(request.user)
+        return Response(JournalEntrySerializer(entry).data)
+
+    @action(detail=False, methods=["get"], url_path="balance-sheet")
+    def balance_sheet(self, request):
+        end_date = request.query_params.get("end_date")
+        if not end_date:
+            return Response({"detail": "Paramètre end_date requis."}, status=400)
+        accts = ChartOfAccount.objects.filter(account_type__in=["actif", "passif"], is_active=True)
+        result = []
+        for a in accts:
+            lines = JournalLine.objects.filter(
+                account=a, entry__entry_date__lte=end_date, entry__status=JournalEntry.Status.POSTED,
+            )
+            td = lines.aggregate(t=DSum("debit"))["t"]  or 0
+            tc = lines.aggregate(t=DSum("credit"))["t"] or 0
+            bal = td - tc
+            if a.normal_balance == "credit":
+                bal = -bal
+            result.append({"code": a.code, "name": a.name, "account_type": a.account_type,
+                           "debit": td, "credit": tc, "balance": bal})
+        return Response(result)
+
+    @action(detail=False, methods=["get"], url_path="income-statement")
+    def income_statement(self, request):
+        start = request.query_params.get("start_date")
+        end   = request.query_params.get("end_date")
+        if not start or not end:
+            return Response({"detail": "Paramètres start_date et end_date requis."}, status=400)
+        accts = ChartOfAccount.objects.filter(account_type__in=["charge", "produit"], is_active=True)
+        result, total_charges, total_produits = [], 0, 0
+        for a in accts:
+            lines = JournalLine.objects.filter(
+                account=a, entry__entry_date__gte=start, entry__entry_date__lte=end,
+                entry__status=JournalEntry.Status.POSTED,
+            )
+            td = lines.aggregate(t=DSum("debit"))["t"]  or 0
+            tc = lines.aggregate(t=DSum("credit"))["t"] or 0
+            if a.account_type == "produit":
+                bal = tc - td
+                total_produits += float(bal)
+            else:
+                bal = td - tc
+                total_charges += float(bal)
+            result.append({"code": a.code, "name": a.name, "account_type": a.account_type,
+                           "debit": td, "credit": tc, "balance": bal})
+        return Response({
+            "lines": result,
+            "summary": {
+                "total_charges": total_charges,
+                "total_produits": total_produits,
+                "result": total_produits - total_charges,
+            },
+        })
+
+
+class JournalLineViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = JournalLineSerializer
+    permission_classes = [AccountingPermission]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["account", "entry"]
+    ordering_fields = ["id"]
+
+    def get_queryset(self):
+        return JournalLine.objects.select_related("account", "entry").all()

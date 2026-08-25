@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Sum
@@ -89,7 +90,7 @@ class Invoice(models.Model):
             None: Decimal("0.00"),
             "pre_relance": Decimal("0.00"),
             "j30": Decimal("0.25"),
-            "j60": Decimal("0.50"),  # Fixed from j50 to j60
+            "j60": Decimal("0.50"),
             "j90": Decimal("1.00"),
         }.get(stage, Decimal("0.00"))
 
@@ -366,7 +367,7 @@ class SubscriptionChange(models.Model):
     notes = models.TextField(blank=True)
     effective_date = models.DateField()
     recorded_by = models.ForeignKey(
-        "auth.User",
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -464,7 +465,7 @@ class DunningAction(models.Model):
     )
     notes = models.TextField(blank=True)
     recorded_by = models.ForeignKey(
-        "auth.User",
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -490,3 +491,176 @@ class DunningAction(models.Model):
 
     def __str__(self):
         return f"{self.invoice.invoice_number} — {self.get_level_display()} ({self.action_date})"
+
+
+# ── S8: General Ledger ────────────────────────────────────────────────────────
+
+class ChartOfAccount(models.Model):
+    class AccountType(models.TextChoices):
+        ACTIF   = "actif",   "Actif"
+        PASSIF  = "passif",  "Passif"
+        CHARGE  = "charge",  "Charge"
+        PRODUIT = "produit", "Produit"
+
+    class NormalBalance(models.TextChoices):
+        DEBIT  = "debit",  "Débit"
+        CREDIT = "credit", "Crédit"
+
+    code           = models.CharField(max_length=20, unique=True)
+    name           = models.CharField(max_length=200)
+    parent         = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="children")
+    account_type   = models.CharField(max_length=20, choices=AccountType.choices)
+    normal_balance = models.CharField(max_length=10, choices=NormalBalance.choices)
+    is_active      = models.BooleanField(default=True)
+    is_analytical  = models.BooleanField(default=False)
+    description    = models.TextField(blank=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["code"]
+        verbose_name = "Plan comptable"
+        verbose_name_plural = "Plan comptable"
+
+    def __str__(self):
+        return f"{self.code} — {self.name}"
+
+    @property
+    def level(self):
+        n, p = 0, self.parent
+        while p:
+            n += 1
+            p = p.parent
+        return n
+
+
+class Journal(models.Model):
+    class JournalType(models.TextChoices):
+        VENTES          = "ventes",          "Ventes"
+        ACHATS          = "achats",          "Achats"
+        BANQUE          = "banque",          "Banque"
+        CAISSE          = "caisse",          "Caisse"
+        OD              = "od",              "Opérations diverses"
+        SALAIRES        = "salaires",        "Salaires"
+        IMMOBILISATIONS = "immobilisations", "Immobilisations"
+
+    code         = models.CharField(max_length=10, unique=True)
+    name         = models.CharField(max_length=100)
+    journal_type = models.CharField(max_length=20, choices=JournalType.choices, default=JournalType.OD)
+    is_active    = models.BooleanField(default=True)
+    description  = models.TextField(blank=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["code"]
+        verbose_name = "Journal"
+        verbose_name_plural = "Journaux"
+
+    def __str__(self):
+        return f"{self.code} — {self.name}"
+
+
+class JournalEntry(models.Model):
+    class Status(models.TextChoices):
+        DRAFT     = "draft",     "Brouillon"
+        POSTED    = "posted",    "Validée"
+        CANCELLED = "cancelled", "Annulée"
+
+    entry_number = models.CharField(max_length=50, unique=True, blank=True)
+    journal      = models.ForeignKey(Journal, on_delete=models.PROTECT, related_name="entries")
+    created_by   = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="journal_entries_created")
+    validated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="journal_entries_validated")
+    entry_date   = models.DateField()
+    posted_at    = models.DateTimeField(null=True, blank=True)
+    description  = models.TextField()
+    reference    = models.CharField(max_length=100, blank=True)
+    invoice      = models.ForeignKey("Invoice",  on_delete=models.SET_NULL, null=True, blank=True, related_name="journal_entries")
+    payment      = models.ForeignKey("Payment",  on_delete=models.SET_NULL, null=True, blank=True, related_name="journal_entries")
+    total_debit  = models.DecimalField(max_digits=15, decimal_places=3, default=0)
+    total_credit = models.DecimalField(max_digits=15, decimal_places=3, default=0)
+    status       = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    created_at   = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-entry_date", "-created_at"]
+        verbose_name = "Écriture comptable"
+        verbose_name_plural = "Écritures comptables"
+
+    def __str__(self):
+        return f"{self.entry_number} — {self.description[:50]}"
+
+    @property
+    def is_balanced(self):
+        return self.total_debit == self.total_credit
+
+    @property
+    def line_count(self):
+        return self.lines.count()
+
+    def _generate_entry_number(self):
+        from django.utils import timezone as tz
+        last = JournalEntry.objects.order_by("-id").first()
+        num = 1
+        if last and last.entry_number:
+            try:
+                num = int(last.entry_number.split("-")[-1]) + 1
+            except (ValueError, IndexError):
+                pass
+        return f"ECR-{tz.now().year}-{num:06d}"
+
+    def _update_totals(self):
+        agg = self.lines.aggregate(td=Sum("debit"), tc=Sum("credit"))
+        self.total_debit  = agg["td"] or 0
+        self.total_credit = agg["tc"] or 0
+        self.save(update_fields=["total_debit", "total_credit"])
+
+    def post(self, user):
+        if not self.is_balanced:
+            raise ValidationError("L'écriture n'est pas équilibrée.")
+        from django.utils import timezone as tz
+        self.status       = self.Status.POSTED
+        self.posted_at    = tz.now()
+        self.validated_by = user
+        self.save()
+
+    def cancel(self, user):
+        self.status = self.Status.CANCELLED
+        self.save()
+
+    def save(self, *args, **kwargs):
+        if not self.entry_number:
+            self.entry_number = self._generate_entry_number()
+        super().save(*args, **kwargs)
+
+
+class JournalLine(models.Model):
+    entry           = models.ForeignKey(JournalEntry, on_delete=models.CASCADE, related_name="lines")
+    account         = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="journal_lines")
+    debit           = models.DecimalField(max_digits=15, decimal_places=3, default=0)
+    credit          = models.DecimalField(max_digits=15, decimal_places=3, default=0)
+    description     = models.CharField(max_length=255, blank=True)
+    analytical_code = models.CharField(max_length=50, blank=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        verbose_name = "Ligne d'écriture"
+        verbose_name_plural = "Lignes d'écriture"
+
+    def __str__(self):
+        return f"{self.account.code} D:{self.debit} C:{self.credit}"
+
+    def clean(self):
+        has_d = self.debit and self.debit > 0
+        has_c = self.credit and self.credit > 0
+        if has_d and has_c:
+            raise ValidationError("Une ligne ne peut pas avoir à la fois un débit et un crédit.")
+        if not has_d and not has_c:
+            raise ValidationError("Une ligne doit avoir un débit ou un crédit.")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+        self.entry._update_totals()

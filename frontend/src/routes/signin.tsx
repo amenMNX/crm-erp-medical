@@ -59,6 +59,7 @@ function SigninPage() {
           [response.user.first_name, response.user.last_name].filter(Boolean).join(" ") || response.user.username,
         email: response.user.email,
         role: response.user.profile?.role,
+        is_super_admin: response.user.profile?.is_super_admin ?? false,
       });
 
       navigate({ to: "/dashboard", replace: true });

@@ -6,6 +6,7 @@ export type AuthUser = {
   name: string;
   email: string;
   role?: string;
+  is_super_admin?: boolean;  // S1
 };
 
 export function getAuthUser(): AuthUser | null {

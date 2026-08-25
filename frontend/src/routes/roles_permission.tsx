@@ -65,7 +65,7 @@ type RoleMember =
 const DEFAULT_ROLE_ID = "user";
 
 const BUILT_IN_ROLE_DEFS: RoleDef[] = [
-  { id: "user", name: "User", builtIn: true },  
+  { id: "user", name: "User", builtIn: true },
   { id: "admin", name: "Admin", builtIn: true },
   { id: "doctor", name: "Doctor", builtIn: true },
   { id: "secretary", name: "Secretary", builtIn: true },
@@ -76,6 +76,8 @@ const BUILT_IN_ROLE_DEFS: RoleDef[] = [
   { id: "receptionist", name: "Receptionist", builtIn: true },
   { id: "assistant", name: "Assistant", builtIn: true },
 ];
+
+const BUILT_IN_ROLE_IDS = new Set(BUILT_IN_ROLE_DEFS.map((r) => r.id));
 
 function effectiveRoleId(u: ApiUser) {
   if (u.is_superuser) return "admin";
@@ -95,21 +97,50 @@ type ModuleDef = {
 };
 
 const MODULES: ModuleDef[] = [
+  // ── Dashboard ──────────────────────────────────────────────────────────────
   { name: "Dashboard", hasWrite: false, icon: "📊", description: "Overview & analytics", defaultWriteRoles: [] },
+
+  // ── Module CRM — Gestion du Parcours Patient ─────────────────────────────
   { name: "Patients", hasWrite: true, icon: "🧑‍⚕️", description: "Patient records & history", defaultWriteRoles: ["admin", "doctor", "secretary"] },
-  { name: "Appointments", hasWrite: true, icon: "📅", description: "Scheduling & calendars", defaultWriteRoles: ["admin", "doctor", "secretary"] },
-  { name: "Complaints", hasWrite: true, icon: "📋", description: "Patient complaints", defaultWriteRoles: ["admin", "doctor", "secretary"] },
+  { name: "Traitements", hasWrite: true, icon: "⚕️", description: "Treatment plans & sessions", defaultWriteRoles: ["admin", "doctor"] },
+  { name: "Protocoles", hasWrite: true, icon: "🔬", description: "Treatment protocols", defaultWriteRoles: ["admin", "doctor"] },
+  { name: "Calendrier", hasWrite: true, icon: "📅", description: "Scheduling & calendars", defaultWriteRoles: ["admin", "doctor", "secretary"] },
+  { name: "Planning équipe", hasWrite: true, icon: "👥", description: "Team scheduling", defaultWriteRoles: ["admin", "manager", "secretary"] },
+
+  // ── Module CRM — Support, Tickets & Incidents ────────────────────────────
   { name: "Tickets", hasWrite: true, icon: "🎫", description: "Support tickets", defaultWriteRoles: ["admin", "support_client", "secretary"] },
-  { name: "Employees", hasWrite: true, icon: "👥", description: "Staff management", defaultWriteRoles: ["admin", "hr"] },
-  { name: "Leaves & Absences", hasWrite: true, icon: "🏖️", description: "Leave requests", defaultWriteRoles: ["admin", "hr"] },
-  { name: "Invoices & Payments", hasWrite: true, icon: "💳", description: "Billing & finance", defaultWriteRoles: ["admin", "accountant"] },
-  { name: "CNAM Claims", hasWrite: true, icon: "📑", description: "Insurance claims", defaultWriteRoles: ["admin", "accountant"] },
-  { name: "Protocols", hasWrite: true, icon: "🔬", description: "Treatment protocols", defaultWriteRoles: ["admin", "doctor"] },
-  { name: "Stocks", hasWrite: true, icon: "📦", description: "Inventory management", defaultWriteRoles: ["admin", "secretary"] },
-  { name: "Formations", hasWrite: true, icon: "🎓", description: "Training sessions", defaultWriteRoles: ["admin", "hr"] },
-  { name: "Payroll", hasWrite: true, icon: "💰", description: "Salary & payroll", defaultWriteRoles: ["admin", "accountant", "hr"] },
-  { name: "Roles & Permissions", hasWrite: false, icon: "🔐", description: "Admin only", defaultWriteRoles: [] },
-  { name: "Audit Log", hasWrite: false, icon: "📋", description: "System audit trail", defaultWriteRoles: [] },
+  { name: "Incidents", hasWrite: true, icon: "⚠️", description: "Incident management", defaultWriteRoles: ["admin", "manager"] },
+  { name: "Réclamations", hasWrite: true, icon: "📋", description: "Patient complaints", defaultWriteRoles: ["admin", "doctor", "secretary"] },
+  { name: "Messages", hasWrite: true, icon: "💬", description: "Internal & external messages", defaultWriteRoles: ["admin", "hr", "doctor", "secretary"] },
+  { name: "Notifications", hasWrite: false, icon: "🔔", description: "System notifications", defaultWriteRoles: [] },
+
+  // ── Module RH — Gestion des Ressources Humaines ──────────────────────────
+  { name: "Employés", hasWrite: true, icon: "👤", description: "Staff management", defaultWriteRoles: ["admin", "hr"] },
+  { name: "Congés", hasWrite: true, icon: "🏖️", description: "Leave requests", defaultWriteRoles: ["admin", "hr"] },
+  { name: "Absences", hasWrite: true, icon: "🚫", description: "Absence tracking", defaultWriteRoles: ["admin", "hr"] },
+  { name: "Avances sur salaire", hasWrite: true, icon: "💰", description: "Salary advances", defaultWriteRoles: ["admin", "hr", "accountant"] },
+  { name: "Formations & Compétences", hasWrite: true, icon: "🎓", description: "Training & skills", defaultWriteRoles: ["admin", "hr"] },
+
+  // ── Module Comptabilité — Facturation & Finances ────────────────────────
+  { name: "Factures", hasWrite: true, icon: "📄", description: "Invoices management", defaultWriteRoles: ["admin", "accountant"] },
+  { name: "Paiements", hasWrite: true, icon: "💳", description: "Payment tracking", defaultWriteRoles: ["admin", "accountant"] },
+  { name: "CNAM", hasWrite: true, icon: "🛡️", description: "Insurance claims", defaultWriteRoles: ["admin", "accountant"] },
+  { name: "Abonnements", hasWrite: true, icon: "🔄", description: "Subscription management", defaultWriteRoles: ["admin", "accountant"] },
+  { name: "Paie", hasWrite: true, icon: "💵", description: "Payroll management", defaultWriteRoles: ["admin", "accountant", "hr"] },
+  { name: "Recouvrement", hasWrite: true, icon: "📉", description: "Debt recovery", defaultWriteRoles: ["admin", "accountant"] },
+
+  // ── Stock et matériel ─────────────────────────────────────────────────────
+  { name: "Stocks médicaux", hasWrite: true, icon: "📦", description: "Medical inventory", defaultWriteRoles: ["admin", "secretary"] },
+  { name: "Équipements", hasWrite: true, icon: "🔧", description: "Equipment management", defaultWriteRoles: ["admin", "manager"] },
+
+  // ── Dashboard & Business Intelligence ────────────────────────────────────
+  { name: "Analytics", hasWrite: false, icon: "📈", description: "Business analytics", defaultWriteRoles: [] },
+  { name: "Rapports", hasWrite: false, icon: "📊", description: "Reports & exports", defaultWriteRoles: [] },
+
+  // ── Administration, Rôles & Sécurité ─────────────────────────────────────
+  { name: "Rôles & Permissions", hasWrite: false, icon: "🔐", description: "Admin only", defaultWriteRoles: [] },
+  { name: "Journal d'audit", hasWrite: false, icon: "📋", description: "System audit trail", defaultWriteRoles: [] },
+  { name: "Paramètres", hasWrite: false, icon: "⚙️", description: "System settings", defaultWriteRoles: [] },
 ];
 
 /* ──────────────────────────────────────────────────────────────────────────── */
@@ -135,9 +166,9 @@ function createRole(payload: {
   role_name: string;
   write_permissions: string[];
 }): Promise<ApiRolePermission> {
-  return apiFetch("/accounts/role-permissions/", { 
-    method: "POST", 
-    body: payload 
+  return apiFetch("/accounts/role-permissions/", {
+    method: "POST",
+    body: payload,
   });
 }
 
@@ -159,17 +190,27 @@ function updateRolePermissions(
 /*  Permission logic                                                            */
 /* ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Resolve the canonical ID used inside permission maps for a RolePermission row.
+ *
+ * Built-in roles  → use the role slug (e.g. "admin", "doctor").
+ * Custom/auto-provisioned roles → use the numeric DB id as a string (e.g. "42").
+ *
+ * This must mirror how `effectiveRoleId()` and `selectedRoleId` are set so that
+ * look-ups in the write/view maps always find a match.
+ */
+function resolvePermKey(rp: ApiRolePermission): string {
+  return rp.is_built_in ? rp.role_name.toLowerCase() : String(rp.id);
+}
+
 function buildWritePermissionsMap(rolePermissions: ApiRolePermission[]) {
   const map: Record<string, string[]> = {};
-  for (const role of rolePermissions) {
-    const roleId = role.is_built_in ? role.role_name.toLowerCase() : String(role.id);
-    for (const moduleName of role.write_permissions) {
-      // Skip view denial entries for write map
-      if (moduleName.startsWith('noview:')) continue;
-      if (!map[moduleName]) map[moduleName] = [];
-      map[moduleName] = Array.from(
-        new Set([...map[moduleName], roleId])
-      );
+  for (const rp of rolePermissions) {
+    const key = resolvePermKey(rp);
+    for (const perm of rp.write_permissions) {
+      if (perm.startsWith("noview:")) continue;
+      if (!map[perm]) map[perm] = [];
+      map[perm] = Array.from(new Set([...map[perm], key]));
     }
   }
   return map;
@@ -177,16 +218,13 @@ function buildWritePermissionsMap(rolePermissions: ApiRolePermission[]) {
 
 function buildViewDenialsMap(rolePermissions: ApiRolePermission[]) {
   const map: Record<string, string[]> = {};
-  for (const role of rolePermissions) {
-    const roleId = role.is_built_in ? role.role_name.toLowerCase() : String(role.id);
-    for (const perm of role.write_permissions) {
-      if (perm.startsWith('noview:')) {
-        const moduleName = perm.substring(7); // remove 'noview:' prefix
-        if (!map[moduleName]) map[moduleName] = [];
-        map[moduleName] = Array.from(
-          new Set([...map[moduleName], roleId])
-        );
-      }
+  for (const rp of rolePermissions) {
+    const key = resolvePermKey(rp);
+    for (const perm of rp.write_permissions) {
+      if (!perm.startsWith("noview:")) continue;
+      const moduleName = perm.slice(7); // strip "noview:"
+      if (!map[moduleName]) map[moduleName] = [];
+      map[moduleName] = Array.from(new Set([...map[moduleName], key]));
     }
   }
   return map;
@@ -197,13 +235,10 @@ function permissionsForRole(
   writePermissions: Record<string, string[]>,
   viewDenials: Record<string, string[]>
 ): Record<string, { view: PermissionState; write: PermissionState }> {
-  const result: Record<
-    string,
-    { view: PermissionState; write: PermissionState }
-  > = {};
+  const result: Record<string, { view: PermissionState; write: PermissionState }> = {};
   for (const mod of MODULES) {
     if (!mod.hasWrite) {
-      // For modules without write, view is always allowed
+      // Read-only modules are always viewable; write is N/A
       result[mod.name] = { view: "allowed", write: "na" };
     } else {
       const writeAllowed = (writePermissions[mod.name] ?? []).includes(roleId);
@@ -517,17 +552,20 @@ function EditUserRoleDialog({
                 <SelectValue placeholder="Select a role" />
               </SelectTrigger>
               <SelectContent>
+                {/* Only built-in roles can be assigned to Django users */}
                 {roleDefs
-                  .filter((r) => r.id !== "user")
+                  .filter((r) => r.builtIn && r.id !== "user")
                   .map((r) => (
                     <SelectItem key={r.id} value={r.id}>
                       {r.name}
-                      {!r.builtIn && " (custom)"}
                     </SelectItem>
                   ))}
               </SelectContent>
             </Select>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Only built-in roles can be assigned to user accounts. Custom / job-title roles are automatically assigned when an employee is created.
+          </p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
@@ -578,7 +616,7 @@ function ViewRoleDialog({
         </DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            {userCount} user{userCount !== 1 ? "s" : ""} assigned •{" "}
+            {userCount} member{userCount !== 1 ? "s" : ""} assigned •{" "}
             {role.builtIn ? "Built-in role" : "Custom role"}
           </p>
           <div className="overflow-x-auto rounded-md border max-h-[400px] overflow-y-auto">
@@ -628,11 +666,10 @@ function ViewRoleDialog({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────── */
-/*  Page Component                                                              */
+/*  Page guard                                                                  */
 /* ──────────────────────────────────────────────────────────────────────────── */
 
 function RolesPermissionsPage() {
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
 
   const meQuery = useQuery({
@@ -665,33 +702,45 @@ function RolesPermissionsPage() {
   return <RolesPermissionsContent />;
 }
 
-/* Inner component */
+/* ──────────────────────────────────────────────────────────────────────────── */
+/*  Inner content component                                                     */
+/* ──────────────────────────────────────────────────────────────────────────── */
+
 function RolesPermissionsContent() {
   const queryClient = useQueryClient();
+
+  /* ── Data fetching ──────────────────────────────────────────────────── */
 
   const usersQuery = useQuery({
     queryKey: ["users"],
     queryFn: fetchUsers,
     refetchOnWindowFocus: true,
   });
+
   const leavesQuery = useQuery({
     queryKey: ["leave-requests"],
     queryFn: fetchLeaveRequests,
     refetchOnWindowFocus: true,
   });
+
   const rolePermissionsQuery = useQuery({
     queryKey: ["role-permissions"],
     queryFn: fetchAllRolePermissions,
     retry: false,
     refetchOnWindowFocus: true,
-    onError: (error: any) => {
-      if (error?.status === 403 || error?.status === 401) {
+  });
+
+  // Handle role permissions error without deprecated onError
+  useEffect(() => {
+    if (rolePermissionsQuery.error) {
+      const err = rolePermissionsQuery.error as any;
+      if (err?.status === 403 || err?.status === 401) {
         toast.error("You don't have permission to view role permissions.");
       } else {
         toast.error("Failed to load role permissions.");
       }
-    },
-  });
+    }
+  }, [rolePermissionsQuery.error]);
 
   const employeesQuery = useQuery({
     queryKey: ["employees"],
@@ -703,20 +752,31 @@ function RolesPermissionsContent() {
   const users = usersQuery.data ?? [];
   const employees = employeesQuery.data ?? [];
 
+  /* ── Derive role definitions ────────────────────────────────────────── */
+
+  /**
+   * Merge built-in role defs with any custom/auto-provisioned ones from the DB.
+   *
+   * Key rule:
+   *  - Built-in: id = role_name slug (e.g. "admin", "doctor").
+   *  - Custom   : id = String(rp.id) — the numeric DB primary key.
+   *
+   * This keeps `selectedRoleId` consistent with `resolvePermKey()` and
+   * `effectiveRoleId()` so permission map lookups always match.
+   */
   const roleDefs: RoleDef[] = useMemo(() => {
-    const builtIn = BUILT_IN_ROLE_DEFS.map(r => ({
-      ...r,
-      id: r.id,
-    }));
+    const builtIn = BUILT_IN_ROLE_DEFS.map((r) => ({ ...r }));
     const custom = rolePermissions
-      .filter(r => !r.is_built_in)
-      .map(r => ({
-        id: String(r.id),
-        name: r.role_name,
+      .filter((rp) => !rp.is_built_in)
+      .map((rp) => ({
+        id: String(rp.id),
+        name: rp.role_name,
         builtIn: false,
       }));
     return [...builtIn, ...custom];
   }, [rolePermissions]);
+
+  /* ── Local UI state ─────────────────────────────────────────────────── */
 
   const [selectedRoleId, setSelectedRoleId] = useState("admin");
   const [roleQuery, setRoleQuery] = useState("");
@@ -740,20 +800,19 @@ function RolesPermissionsContent() {
   const [editUserTarget, setEditUserTarget] = useState<ApiUser | null>(null);
   const [deleteUserTarget, setDeleteUserTarget] = useState<ApiUser | null>(null);
 
+  /* ── Derived data ───────────────────────────────────────────────────── */
+
   const roles = useMemo(
     () =>
       roleDefs.map((r) => {
         if (r.builtIn) {
-          // Built-in roles: count Django users whose profile.role matches
+          // Built-in: count Django users whose profile.role matches the slug
           return { ...r, users: users.filter((u) => effectiveRoleId(u) === r.id).length };
-        } else {
-          // Custom / auto-provisioned roles: count employees whose role_id matches
-          const rolePermission = rolePermissions.find(p => String(p.id) === r.id);
-          const count = rolePermission
-            ? employees.filter((e) => e.role_id === rolePermission.id).length
-            : 0;
-          return { ...r, users: count };
         }
+        // Custom / auto-provisioned: count employees linked to this RolePermission DB row
+        const rp = rolePermissions.find((p) => !p.is_built_in && String(p.id) === r.id);
+        const count = rp ? employees.filter((e) => e.role_id === rp.id).length : 0;
+        return { ...r, users: count };
       }),
     [roleDefs, users, employees, rolePermissions]
   );
@@ -765,8 +824,12 @@ function RolesPermissionsContent() {
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId) ?? roles[0];
 
-  // For built-in roles: members are Django users matched by profile.role.
-  // For custom/auto-provisioned roles: members are employees matched by role_id.
+  /**
+   * Build the member list for the currently selected role.
+   *
+   * Built-in role  → Django users matched by profile.role slug.
+   * Custom role    → Employees matched by Employee.role_id FK.
+   */
   const roleMembers = useMemo((): RoleMember[] => {
     const role = roles.find((r) => r.id === selectedRoleId);
     if (!role) return [];
@@ -786,7 +849,7 @@ function RolesPermissionsContent() {
         }));
     }
 
-    // Custom role: find the RolePermission record that backs this role
+    // Custom role: find the backing RolePermission record
     const rp = rolePermissions.find((r) => !r.is_built_in && String(r.id) === selectedRoleId);
     if (!rp) return [];
 
@@ -804,12 +867,6 @@ function RolesPermissionsContent() {
       }));
   }, [roles, selectedRoleId, users, employees, rolePermissions]);
 
-  // Keep a plain ApiUser list for dialogs that need the raw user shape (view/edit)
-  const roleUsers = useMemo(
-    () => users.filter((u) => effectiveRoleId(u) === selectedRoleId),
-    [users, selectedRoleId]
-  );
-
   const filteredRoleMembers = useMemo(() => {
     const q = userSearch.trim().toLowerCase();
     return roleMembers.filter(
@@ -821,13 +878,17 @@ function RolesPermissionsContent() {
     );
   }, [roleMembers, userSearch]);
 
-  const writePermissionsMap = useMemo(() => {
-    return buildWritePermissionsMap(rolePermissions);
-  }, [rolePermissions]);
+  /* ── Permission maps ────────────────────────────────────────────────── */
 
-  const viewDenialsMap = useMemo(() => {
-    return buildViewDenialsMap(rolePermissions);
-  }, [rolePermissions]);
+  const writePermissionsMap = useMemo(
+    () => buildWritePermissionsMap(rolePermissions),
+    [rolePermissions]
+  );
+
+  const viewDenialsMap = useMemo(
+    () => buildViewDenialsMap(rolePermissions),
+    [rolePermissions]
+  );
 
   const matrix = useMemo(
     () => permissionsForRole(selectedRoleId, writePermissionsMap, viewDenialsMap),
@@ -847,6 +908,28 @@ function RolesPermissionsContent() {
     const rp = rolePermissions.find((r) => !r.is_built_in && String(r.id) === viewRoleTarget.id);
     return rp ? employees.filter((e) => e.role_id === rp.id).length : 0;
   }, [viewRoleTarget, users, employees, rolePermissions]);
+
+  /**
+   * The RolePermission DB record for the currently selected role.
+   * This is what we PATCH when the user toggles a permission switch.
+   *
+   * Built-in roles also have DB records (created by AllRolePermissionsView),
+   * so this will be defined for both built-in and custom roles once the
+   * backend has been hit.
+   */
+  const selectedRolePermission = useMemo(() => {
+    if (!selectedRole) return undefined;
+    if (selectedRole.builtIn) {
+      return rolePermissions.find(
+        (rp) => rp.is_built_in && rp.role_name.toLowerCase() === selectedRole.id
+      );
+    }
+    return rolePermissions.find(
+      (rp) => !rp.is_built_in && String(rp.id) === selectedRole.id
+    );
+  }, [selectedRole, rolePermissions]);
+
+  /* ── Stat helpers ───────────────────────────────────────────────────── */
 
   const distribution = useMemo(() => {
     let allowed = 0;
@@ -870,22 +953,16 @@ function RolesPermissionsContent() {
 
   const writeCapableModules = MODULES.filter((m) => m.hasWrite);
 
-  const selectedRolePermission = useMemo(() => {
-    if (selectedRole?.builtIn) {
-      return rolePermissions.find(
-        r => r.is_built_in && r.role_name.toLowerCase() === selectedRole.id
-      );
-    }
-    return rolePermissions.find(
-      r => !r.is_built_in && String(r.id) === selectedRole?.id
-    );
-  }, [selectedRole, rolePermissions]);
+  /* ── Mutations ──────────────────────────────────────────────────────── */
 
   const updateRoleMutation = useMutation({
     mutationFn: ({ userId, role }: { userId: number; role: string }) =>
       updateUserRole(userId, role),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      // A role change affects what the current user (or the changed user) may see.
+      // Bust the permission cache so the sidebar/shell re-evaluates immediately.
+      queryClient.invalidateQueries({ queryKey: ["my-permissions"] });
       toast.success("Role updated successfully");
       setEditUserRoleOpen(false);
       setEditUserTarget(null);
@@ -908,6 +985,9 @@ function RolesPermissionsContent() {
     }) => updateRolePermissions(id, { write_permissions }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
+      // Changing a role's module permissions must immediately update what any
+      // logged-in user with that role can see — bust the permission cache.
+      queryClient.invalidateQueries({ queryKey: ["my-permissions"] });
       toast.success("Permissions updated");
     },
     onError: () => toast.error("Failed to update permissions"),
@@ -916,18 +996,15 @@ function RolesPermissionsContent() {
   const addRoleMutation = useMutation({
     mutationFn: createRole,
     onSuccess: async (created) => {
-      // Invalidate queries to trigger refetch
       await queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
       await queryClient.invalidateQueries({ queryKey: ["users"] });
-      // Wait for the queries to refetch
+      await queryClient.invalidateQueries({ queryKey: ["my-permissions"] });
       await queryClient.refetchQueries({ queryKey: ["role-permissions"] });
       await queryClient.refetchQueries({ queryKey: ["users"] });
-      // Close the dialog and reset form
       setAddRoleOpen(false);
       setNewRoleName("");
       setNewRoleModules(new Set());
       toast.success(`Role "${created.role_name}" created successfully`);
-      // Set selected role after refetch
       setSelectedRoleId(String(created.id));
     },
     onError: (err: any) => {
@@ -940,6 +1017,7 @@ function RolesPermissionsContent() {
     mutationFn: (id: number) => deleteRole(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
+      queryClient.invalidateQueries({ queryKey: ["my-permissions"] });
       if (roleToRemove && selectedRoleId === String(roleToRemove.id))
         setSelectedRoleId("admin");
       toast.success(`Role "${roleToRemove?.name}" deleted`);
@@ -962,47 +1040,60 @@ function RolesPermissionsContent() {
     onError: () => toast.error("Failed to deactivate user"),
   });
 
+  /* ── Permission toggle handlers ─────────────────────────────────────── */
+
+  /**
+   * Toggle write access for a module.
+   * If the view is currently denied for this module, we refuse to grant write
+   * (write implies view in our RBAC model).
+   */
   function toggleWritePermission(moduleName: string) {
-    if (!selectedRole || !selectedRolePermission) return;
-    const currentPerms = new Set(selectedRolePermission.write_permissions);
-    // Remove any view denial entries for this module
+    if (!selectedRolePermission) return;
+    const current = new Set(selectedRolePermission.write_permissions);
     const viewKey = `noview:${moduleName}`;
-    if (currentPerms.has(viewKey)) {
-      // If view is denied, don't allow write
-      toast.error("Cannot grant write access. View is denied for this module.");
+
+    if (current.has(viewKey)) {
+      toast.error("Cannot grant write access while view is denied.");
       return;
     }
-    if (currentPerms.has(moduleName)) {
-      currentPerms.delete(moduleName);
+
+    if (current.has(moduleName)) {
+      current.delete(moduleName);
     } else {
-      currentPerms.add(moduleName);
+      current.add(moduleName);
     }
+
     togglePermMutation.mutate({
       id: selectedRolePermission.id,
-      write_permissions: Array.from(currentPerms),
+      write_permissions: Array.from(current),
     });
   }
 
+  /**
+   * Toggle view access for a module.
+   * Denying view also removes write access for that module.
+   */
   function toggleViewPermission(moduleName: string) {
-    if (!selectedRole || !selectedRolePermission) return;
-    const currentPerms = new Set(selectedRolePermission.write_permissions);
+    if (!selectedRolePermission) return;
+    const current = new Set(selectedRolePermission.write_permissions);
     const viewKey = `noview:${moduleName}`;
-    const viewDenied = currentPerms.has(viewKey);
-    
-    if (viewDenied) {
-      // Enable view: remove the denial
-      currentPerms.delete(viewKey);
+
+    if (current.has(viewKey)) {
+      // Re-enable view
+      current.delete(viewKey);
     } else {
-      // Disable view: add denial and also remove write
-      currentPerms.add(viewKey);
-      currentPerms.delete(moduleName);
+      // Deny view → also revoke write
+      current.add(viewKey);
+      current.delete(moduleName);
     }
-    
+
     togglePermMutation.mutate({
       id: selectedRolePermission.id,
-      write_permissions: Array.from(currentPerms),
+      write_permissions: Array.from(current),
     });
   }
+
+  /* ── Dialog submit handlers ─────────────────────────────────────────── */
 
   function submitAddRole(e: FormEvent) {
     e.preventDefault();
@@ -1047,9 +1138,16 @@ function RolesPermissionsContent() {
   const pct = (v: number) => Math.round((v / distribution.total) * 100);
   const isLoading = usersQuery.isLoading || rolePermissionsQuery.isLoading;
 
+  /* ── The selected role has a DB record we can edit (toggle available) ── */
+  const canTogglePermissions = Boolean(selectedRolePermission);
+
+  /* ──────────────────────────────────────────────────────────────────── */
+  /*  Render                                                              */
+  /* ──────────────────────────────────────────────────────────────────── */
+
   return (
     <AppShell
-      title="Roles & Permissions"
+      title="Rôles & Permissions"
       actions={
         <div className="flex items-center gap-2">
           <Badge className="hidden sm:flex items-center gap-1 bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100">
@@ -1063,37 +1161,42 @@ function RolesPermissionsContent() {
               queryClient.invalidateQueries({ queryKey: ["users"] });
               queryClient.invalidateQueries({ queryKey: ["leave-requests"] });
               queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
-              toast.success("Data refreshed");
+              queryClient.invalidateQueries({ queryKey: ["employees"] });
+              queryClient.invalidateQueries({ queryKey: ["my-permissions"] });
+              toast.success("Données actualisées");
             }}
             disabled={
               usersQuery.isFetching ||
               leavesQuery.isFetching ||
-              rolePermissionsQuery.isFetching
+              rolePermissionsQuery.isFetching ||
+              employeesQuery.isFetching
             }
           >
             {usersQuery.isFetching ||
             leavesQuery.isFetching ||
-            rolePermissionsQuery.isFetching ? (
+            rolePermissionsQuery.isFetching ||
+            employeesQuery.isFetching ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-            <span className="ml-1.5 hidden sm:inline">Refresh</span>
+            <span className="ml-1.5 hidden sm:inline">Actualiser</span>
           </Button>
 
           <Button variant="outline" size="sm" onClick={() => setAddRoleOpen(true)}>
             <Plus className="h-4 w-4" />
-            <span className="ml-1.5 hidden sm:inline">Add Role</span>
+            <span className="ml-1.5 hidden sm:inline">Ajouter un rôle</span>
           </Button>
 
           <Button size="sm" onClick={() => setAssignOpen(true)}>
             <UserCog className="h-4 w-4" />
-            <span className="ml-1.5 hidden sm:inline">Assign Role</span>
+            <span className="ml-1.5 hidden sm:inline">Assigner un rôle</span>
           </Button>
         </div>
       }
     >
-      {/* Dialogs */}
+      {/* ── Dialogs ─────────────────────────────────────────────────────── */}
+
       <ViewRoleDialog
         role={viewRoleTarget}
         matrix={viewRoleMatrix}
@@ -1125,16 +1228,16 @@ function RolesPermissionsContent() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Deactivate user?</DialogTitle>
+            <DialogTitle>Désactiver l'utilisateur ?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will deactivate{" "}
+            Cela désactivera{" "}
             <strong>{deleteUserTarget ? displayName(deleteUserTarget) : ""}</strong>.
-            They will lose access immediately but their data is preserved.
+            Il perdra immédiatement l'accès mais ses données seront conservées.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteUserTarget(null)}>
-              Cancel
+              Annuler
             </Button>
             <Button
               variant="destructive"
@@ -1147,7 +1250,7 @@ function RolesPermissionsContent() {
               {deactivateUserMutation.isPending && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
-              Deactivate
+              Désactiver
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1160,31 +1263,30 @@ function RolesPermissionsContent() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete "{roleToRemove?.name}"?</DialogTitle>
+            <DialogTitle>Supprimer "{roleToRemove?.name}" ?</DialogTitle>
           </DialogHeader>
           {roleToRemove?.builtIn ? (
             <p className="text-sm text-muted-foreground">
-              This is a built-in role and cannot be deleted.
+              Ce rôle est intégré et ne peut pas être supprimé.
             </p>
           ) : removeUsersBlocking > 0 ? (
             <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
               <p>
                 <strong>{removeUsersBlocking}</strong>{" "}
-                {roleToRemove && !roleToRemove.builtIn ? "employee" : "user"}
-                {removeUsersBlocking !== 1 ? "s are" : " is"} assigned to this
-                role. Reassign them first, then delete the role.
+                employé{removeUsersBlocking !== 1 ? "s sont" : " est"} toujours
+                assigné à ce rôle. Réassignez-les d'abord, puis supprimez le rôle.
               </p>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              This will permanently delete the role and all its permission
-              entries. No members are currently assigned to it.
+              Cela supprimera définitivement le rôle et toutes ses entrées de
+              permissions. Aucun membre n'y est actuellement assigné.
             </p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setRoleToRemove(null)}>
-              Cancel
+              Annuler
             </Button>
             <Button
               variant="destructive"
@@ -1198,7 +1300,7 @@ function RolesPermissionsContent() {
               {deleteRoleMutation.isPending && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
-              <Trash2 className="h-4 w-4" /> Delete Role
+              <Trash2 className="h-4 w-4" /> Supprimer le rôle
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1209,22 +1311,22 @@ function RolesPermissionsContent() {
         <DialogContent className="max-w-md">
           <form onSubmit={submitAddRole} className="space-y-4">
             <DialogHeader>
-              <DialogTitle>Create a new role</DialogTitle>
+              <DialogTitle>Créer un nouveau rôle</DialogTitle>
             </DialogHeader>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Role name</label>
+              <label className="text-sm font-medium">Nom du rôle</label>
               <Input
                 value={newRoleName}
                 onChange={(e) => setNewRoleName(e.target.value)}
-                placeholder="e.g. Lab Technician"
+                placeholder="ex: Technicien de laboratoire"
                 autoFocus
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Write access</label>
+              <label className="text-sm font-medium">Accès en écriture</label>
               <p className="text-xs text-muted-foreground">
-                View access is granted to every role by default. Select which
-                modules this role can create, edit, or delete.
+                L'accès en lecture est accordé à tous les rôles par défaut.
+                Sélectionnez les modules que ce rôle peut créer, modifier ou supprimer.
               </p>
               <div className="grid grid-cols-2 gap-1.5 rounded-md border p-3 max-h-[200px] overflow-y-auto">
                 {writeCapableModules.map((mod) => (
@@ -1252,7 +1354,7 @@ function RolesPermissionsContent() {
               </div>
               {newRoleModules.size > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  {newRoleModules.size} module{newRoleModules.size > 1 ? "s" : ""} selected
+                  {newRoleModules.size} module{newRoleModules.size > 1 ? "s" : ""} sélectionné{newRoleModules.size > 1 ? "s" : ""}
                 </p>
               )}
             </div>
@@ -1266,64 +1368,81 @@ function RolesPermissionsContent() {
                   setNewRoleModules(new Set());
                 }}
               >
-                Cancel
+                Annuler
               </Button>
               <Button type="submit" disabled={addRoleMutation.isPending || !newRoleName.trim()}>
                 {addRoleMutation.isPending && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-                Create Role
+                Créer le rôle
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* Assign Role Dialog */}
+      {/* Assign Role Dialog — only Django users (built-in roles) */}
       <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
         <DialogContent>
           <form onSubmit={submitAssign} className="space-y-4">
             <DialogHeader>
-              <DialogTitle>Assign a role to a user</DialogTitle>
+              <DialogTitle>Assigner un rôle à un utilisateur</DialogTitle>
             </DialogHeader>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Select user</label>
-              <Select value={assignUserId} onValueChange={setAssignUserId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a user" />
-                </SelectTrigger>
-                <SelectContent className="max-h-[200px]">
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={String(u.id)}>
-                      {displayName(u)} — currently{" "}
-                      {roleDefs.find((r) => r.id === effectiveRoleId(u))?.name ??
-                        "User"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Will assign role:{" "}
-              <strong className="text-foreground">{selectedRole?.name}</strong>
-            </p>
+
+            {selectedRole && !selectedRole.builtIn ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 flex gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <p>
+                  <strong>{selectedRole.name}</strong> est un rôle personnalisé / titre de poste.
+                  Il est automatiquement assigné lorsqu'un employé est créé avec un titre de poste correspondant.
+                  Vous ne pouvez pas l'assigner manuellement à un compte utilisateur ici — faites-le depuis la page des employés.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Sélectionner un utilisateur</label>
+                  <Select value={assignUserId} onValueChange={setAssignUserId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choisir un utilisateur" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[200px]">
+                      {users.map((u) => (
+                        <SelectItem key={u.id} value={String(u.id)}>
+                          {displayName(u)} — actuellement{" "}
+                          {roleDefs.find((r) => r.id === effectiveRoleId(u))?.name ??
+                            "User"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Rôle à assigner :{" "}
+                  <strong className="text-foreground">{selectedRole?.name}</strong>
+                </p>
+              </>
+            )}
+
             <DialogFooter>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setAssignOpen(false)}
               >
-                Cancel
+                {selectedRole && !selectedRole.builtIn ? "Fermer" : "Annuler"}
               </Button>
-              <Button
-                type="submit"
-                disabled={updateRoleMutation.isPending || !assignUserId}
-              >
-                {updateRoleMutation.isPending && (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                )}
-                Assign
-              </Button>
+              {(!selectedRole || selectedRole.builtIn) && (
+                <Button
+                  type="submit"
+                  disabled={updateRoleMutation.isPending || !assignUserId}
+                >
+                  {updateRoleMutation.isPending && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  Assigner
+                </Button>
+              )}
             </DialogFooter>
           </form>
         </DialogContent>
@@ -1332,7 +1451,7 @@ function RolesPermissionsContent() {
       {/* ── Main content ──────────────────────────────────────────────────── */}
       {isLoading ? (
         <div className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading roles & users…
+          <Loader2 className="h-4 w-4 animate-spin" /> Chargement des rôles & utilisateurs…
         </div>
       ) : (
         <div className="space-y-4">
@@ -1341,30 +1460,30 @@ function RolesPermissionsContent() {
             <StatCard
               icon={Shield}
               iconClass="bg-blue-100 text-blue-600"
-              label="Total Roles"
+              label="Total des rôles"
               value={roles.length}
-              sub={`${BUILT_IN_ROLE_DEFS.length} built-in • ${rolePermissions.filter(r => !r.is_built_in).length} custom`}
+              sub={`${BUILT_IN_ROLE_DEFS.length} intégrés • ${rolePermissions.filter((r) => !r.is_built_in).length} personnalisés`}
             />
             <StatCard
               icon={Users}
               iconClass="bg-violet-100 text-violet-600"
-              label="Active Users"
+              label="Utilisateurs actifs"
               value={users.filter((u) => u.is_active).length}
-              sub={`${users.length} total accounts`}
+              sub={`${users.length} comptes au total`}
             />
             <StatCard
               icon={ShieldAlert}
               iconClass="bg-emerald-100 text-emerald-600"
-              label="Superusers"
+              label="Superutilisateurs"
               value={users.filter((u) => u.is_superuser).length}
-              sub="Full Django access"
+              sub="Accès Django complet"
             />
             <StatCard
               icon={ShieldCheck}
               iconClass="bg-amber-100 text-amber-600"
-              label="Pending Leaves"
+              label="Congés en attente"
               value={pendingLeaves}
-              sub="Awaiting approval"
+              sub="En attente d'approbation"
             />
           </div>
 
@@ -1373,12 +1492,12 @@ function RolesPermissionsContent() {
             {/* ── Roles list ────────────────────────────────────────────── */}
             <Card>
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-base">Roles</CardTitle>
+                <CardTitle className="text-base">Rôles</CardTitle>
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={() => setAddRoleOpen(true)}
-                  title="Add role"
+                  title="Ajouter un rôle"
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
@@ -1389,7 +1508,7 @@ function RolesPermissionsContent() {
                   <Input
                     value={roleQuery}
                     onChange={(e) => setRoleQuery(e.target.value)}
-                    placeholder="Search roles…"
+                    placeholder="Rechercher des rôles…"
                     className="pl-9"
                   />
                   {roleQuery && (
@@ -1432,21 +1551,21 @@ function RolesPermissionsContent() {
                                   variant="outline"
                                   className="px-1 py-0 text-[9px] leading-4"
                                 >
-                                  Custom
+                                  Personnalisé
                                 </Badge>
                               )}
                             </div>
                             <p className="text-xs text-muted-foreground">
-                              {role.users} user{role.users !== 1 ? "s" : ""}
+                              {role.users} {role.builtIn ? "utilisateur" : "employé"}{role.users !== 1 ? "s" : ""}
                             </p>
                           </div>
                         </button>
 
-                        {/* Action buttons - always visible */}
+                        {/* Action buttons */}
                         <div className="flex items-center gap-0.5">
                           <button
                             type="button"
-                            title="View permissions"
+                            title="Voir les permissions"
                             onClick={(e) => {
                               e.stopPropagation();
                               setViewRoleTarget(role);
@@ -1458,7 +1577,11 @@ function RolesPermissionsContent() {
                           </button>
                           <button
                             type="button"
-                            title={role.builtIn ? "Built-in roles cannot be deleted" : "Delete role"}
+                            title={
+                              role.builtIn
+                                ? "Les rôles intégrés ne peuvent pas être supprimés"
+                                : "Supprimer le rôle"
+                            }
                             disabled={role.builtIn}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1478,14 +1601,14 @@ function RolesPermissionsContent() {
                   })}
                   {filteredRoles.length === 0 && (
                     <p className="p-2.5 text-xs text-muted-foreground">
-                      No roles match "{roleQuery}".
+                      Aucun rôle ne correspond à "{roleQuery}".
                     </p>
                   )}
                 </div>
               </CardContent>
             </Card>
 
-            {/* ── Permissions matrix + Users tab ───────────────────────── */}
+            {/* ── Permissions matrix + Members tab ────────────────────── */}
             <Card>
               <CardHeader className="space-y-0 pb-0">
                 <div className="flex items-center justify-between">
@@ -1495,12 +1618,12 @@ function RolesPermissionsContent() {
                     </CardTitle>
                     {selectedRole && HIGH_PRIVILEGE_ROLES.has(selectedRole.id) && (
                       <Badge variant="destructive" className="text-[10px]">
-                        High privilege
+                        Haute privilège
                       </Badge>
                     )}
                     {selectedRole && !selectedRole.builtIn && (
                       <Badge variant="outline" className="text-[10px]">
-                        Custom
+                        Personnalisé
                       </Badge>
                     )}
                   </div>
@@ -1510,7 +1633,7 @@ function RolesPermissionsContent() {
                     onClick={() => setAssignOpen(true)}
                   >
                     <UserCog className="h-3.5 w-3.5" />
-                    <span className="ml-1.5 hidden sm:inline">Assign User</span>
+                    <span className="ml-1.5 hidden sm:inline">Assigner un utilisateur</span>
                   </Button>
                 </div>
                 <div className="mt-3 flex border-b">
@@ -1526,16 +1649,23 @@ function RolesPermissionsContent() {
                       }`}
                     >
                       {tab === "permissions"
-                        ? `Permissions`
-                        : `Members (${roleMembers.length})`}
+                        ? "Permissions"
+                        : `Membres (${roleMembers.length})`}
                     </button>
                   ))}
                 </div>
               </CardHeader>
 
               <CardContent className="p-4 pt-3">
+                {/* ── Permissions tab ──────────────────────────────────── */}
                 {activeTab === "permissions" && (
                   <div className="space-y-3">
+                    {!canTogglePermissions && (
+                      <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        Aucun enregistrement de permission trouvé pour ce rôle — les permissions sont en lecture seule jusqu'à ce que le backend en crée un (visitez cette page une fois connecté en tant qu'admin pour auto-initialiser).
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded-md border">
                       <table className="w-full text-sm">
                         <thead>
@@ -1544,10 +1674,10 @@ function RolesPermissionsContent() {
                               Module
                             </th>
                             <th className="p-3 text-center font-medium text-muted-foreground">
-                              View
+                              Lecture
                             </th>
                             <th className="p-3 text-center font-medium text-muted-foreground">
-                              Create / Edit / Delete
+                              Création / Modification / Suppression
                             </th>
                           </tr>
                         </thead>
@@ -1570,22 +1700,22 @@ function RolesPermissionsContent() {
                                 <PermCell
                                   state={matrix[mod.name]?.view ?? "denied"}
                                   onClick={
-                                    mod.hasWrite && selectedRolePermission
+                                    mod.hasWrite && canTogglePermissions
                                       ? () => toggleViewPermission(mod.name)
                                       : undefined
                                   }
-                                  disabled={!selectedRolePermission || !mod.hasWrite}
+                                  disabled={!canTogglePermissions || !mod.hasWrite}
                                 />
                               </td>
                               <td className="p-3 text-center">
                                 <PermCell
                                   state={matrix[mod.name]?.write ?? "denied"}
                                   onClick={
-                                    mod.hasWrite && selectedRolePermission
+                                    mod.hasWrite && canTogglePermissions
                                       ? () => toggleWritePermission(mod.name)
                                       : undefined
                                   }
-                                  disabled={!selectedRolePermission || !mod.hasWrite}
+                                  disabled={!canTogglePermissions || !mod.hasWrite}
                                 />
                               </td>
                             </tr>
@@ -1594,11 +1724,14 @@ function RolesPermissionsContent() {
                       </table>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Toggle view or write access for this role. Changes persist to the backend immediately.
+                      {canTogglePermissions
+                        ? "Activez ou désactivez l'accès en lecture ou en écriture pour ce rôle. Les modifications sont enregistrées immédiatement."
+                        : "Les permissions sont en lecture seule pour ce rôle — aucun enregistrement en base de données n'existe encore."}
                     </p>
                   </div>
                 )}
 
+                {/* ── Members tab ──────────────────────────────────────── */}
                 {activeTab === "users" && (
                   <div className="space-y-3">
                     <div className="relative">
@@ -1606,7 +1739,7 @@ function RolesPermissionsContent() {
                       <Input
                         value={userSearch}
                         onChange={(e) => setUserSearch(e.target.value)}
-                        placeholder="Search members…"
+                        placeholder="Rechercher des membres…"
                         className="pl-9"
                       />
                       {userSearch && (
@@ -1624,9 +1757,9 @@ function RolesPermissionsContent() {
                       <p className="py-6 text-center text-sm text-muted-foreground">
                         {roleMembers.length === 0
                           ? selectedRole?.builtIn
-                            ? "No users have this role."
-                            : "No employees have been assigned this role yet. Add an employee with a matching job title."
-                          : "No members match your search."}
+                            ? "Aucun utilisateur n'a ce rôle."
+                            : "Aucun employé n'a été assigné à ce rôle. Créez un employé avec un titre de poste correspondant."
+                          : "Aucun membre ne correspond à votre recherche."}
                       </p>
                     ) : (
                       <div className="space-y-1 max-h-[380px] overflow-y-auto">
@@ -1651,24 +1784,24 @@ function RolesPermissionsContent() {
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               {!m.is_active && (
                                 <Badge variant="destructive" className="text-[9px]">
-                                  Inactive
+                                  Inactif
                                 </Badge>
                               )}
                               {m.kind === "employee" && (
                                 <Badge variant="outline" className="text-[9px]">
-                                  Employee
+                                  Employé
                                 </Badge>
                               )}
                               {m.kind === "user" && m.is_superuser && (
                                 <Badge variant="secondary" className="text-[9px]">
-                                  Superuser
+                                  Superutilisateur
                                 </Badge>
                               )}
                               {m.kind === "user" && (
                                 <>
                                   <button
                                     type="button"
-                                    title="View user"
+                                    title="Voir l'utilisateur"
                                     onClick={() => {
                                       setViewUserTarget(m.raw);
                                       setViewUserOpen(true);
@@ -1679,7 +1812,7 @@ function RolesPermissionsContent() {
                                   </button>
                                   <button
                                     type="button"
-                                    title="Edit role"
+                                    title="Modifier le rôle"
                                     onClick={() => {
                                       setEditUserTarget(m.raw);
                                       setEditUserRoleOpen(true);
@@ -1691,7 +1824,7 @@ function RolesPermissionsContent() {
                                   {m.is_active && !m.is_superuser && (
                                     <button
                                       type="button"
-                                      title="Deactivate user"
+                                      title="Désactiver l'utilisateur"
                                       onClick={() => setDeleteUserTarget(m.raw)}
                                       className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                                     >
@@ -1713,7 +1846,7 @@ function RolesPermissionsContent() {
             {/* ── Role details sidebar ─────────────────────────────────── */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Role Details</CardTitle>
+                <CardTitle className="text-base">Détails du rôle</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4 p-4 pt-0">
                 <div className="flex items-start gap-3">
@@ -1724,19 +1857,46 @@ function RolesPermissionsContent() {
                     <p className="font-medium">{selectedRole?.name}</p>
                     <p className="text-xs text-muted-foreground">
                       {selectedRole?.builtIn
-                        ? "Built-in role"
-                        : "Custom role (editable)"}
+                        ? "Rôle intégré"
+                        : "Rôle personnalisé / titre de poste"}
                     </p>
+                    {selectedRole && !selectedRole.builtIn && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Auto-assigné lorsqu'un employé avec ce titre de poste est créé.
+                      </p>
+                    )}
                   </div>
+                </div>
+
+                {/* DB record status */}
+                <div className="rounded-md border px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Enregistrement DB</span>
+                    {canTogglePermissions ? (
+                      <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                        <CheckCircle2 className="h-3 w-3" /> Actif
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-amber-600 font-medium">
+                        <XCircle className="h-3 w-3" /> En attente
+                      </span>
+                    )}
+                  </div>
+                  {canTogglePermissions && selectedRolePermission && (
+                    <div className="mt-1.5 text-muted-foreground space-y-0.5">
+                      <div>ID: #{selectedRolePermission.id}</div>
+                      <div>Mis à jour: {new Date(selectedRolePermission.updated_at).toLocaleDateString()}</div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
                   <p className="mb-2 text-sm font-medium">
-                    Members ({roleMembers.length})
+                    Membres ({roleMembers.length})
                   </p>
                   {roleMembers.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                      No members assigned.
+                      Aucun membre assigné.
                     </p>
                   ) : (
                     <div className="flex flex-wrap -space-x-2">
@@ -1751,7 +1911,9 @@ function RolesPermissionsContent() {
                               setViewUserOpen(true);
                             }
                           }}
-                          className={`flex h-8 w-8 items-center justify-center rounded-full border-2 border-background text-[11px] font-semibold transition-transform hover:z-10 hover:scale-110 ${avatarColor(m.name)} ${m.kind === "employee" ? "cursor-default" : "cursor-pointer"}`}
+                          className={`flex h-8 w-8 items-center justify-center rounded-full border-2 border-background text-[11px] font-semibold transition-transform hover:z-10 hover:scale-110 ${avatarColor(m.name)} ${
+                            m.kind === "employee" ? "cursor-default" : "cursor-pointer"
+                          }`}
                         >
                           {initialsOf(m.name)}
                         </button>
@@ -1766,24 +1928,22 @@ function RolesPermissionsContent() {
                 </div>
 
                 <div>
-                  <p className="mb-2 text-sm font-medium">
-                    Permission Summary
-                  </p>
+                  <p className="mb-2 text-sm font-medium">Résumé des permissions</p>
                   <div className="space-y-1.5">
                     {[
                       {
-                        label: "View access",
-                        count: MODULES.filter(m => matrix[m.name]?.view === "allowed").length,
+                        label: "Accès en lecture",
+                        count: MODULES.filter((m) => matrix[m.name]?.view === "allowed").length,
                         color: "text-emerald-600",
                       },
                       {
-                        label: "Write access",
-                        count: MODULES.filter(m => matrix[m.name]?.write === "allowed").length,
+                        label: "Accès en écriture",
+                        count: MODULES.filter((m) => matrix[m.name]?.write === "allowed").length,
                         color: "text-blue-600",
                       },
                       {
-                        label: "View denied",
-                        count: MODULES.filter(m => matrix[m.name]?.view === "denied").length,
+                        label: "Lecture refusée",
+                        count: MODULES.filter((m) => matrix[m.name]?.view === "denied").length,
                         color: "text-rose-500",
                       },
                     ].map((item) => (
@@ -1791,9 +1951,7 @@ function RolesPermissionsContent() {
                         key={item.label}
                         className="flex items-center justify-between text-xs"
                       >
-                        <span className="text-muted-foreground">
-                          {item.label}
-                        </span>
+                        <span className="text-muted-foreground">{item.label}</span>
                         <span className={`font-medium ${item.color}`}>
                           {item.count}/{MODULES.length}
                         </span>
@@ -1811,7 +1969,7 @@ function RolesPermissionsContent() {
                     setViewRoleOpen(true);
                   }}
                 >
-                  <Eye className="h-4 w-4" /> View Full Permissions
+                  <Eye className="h-4 w-4" /> Voir toutes les permissions
                 </Button>
                 <Button
                   className="w-full"
@@ -1819,34 +1977,46 @@ function RolesPermissionsContent() {
                   size="sm"
                   onClick={() => setAssignOpen(true)}
                 >
-                  <UserCog className="h-4 w-4" /> Assign a user
+                  <UserCog className="h-4 w-4" /> Assigner un utilisateur
                 </Button>
                 <Button
                   className="w-full"
                   variant="outline"
                   size="sm"
                   disabled={!selectedRole || selectedRole.builtIn}
-                  title={selectedRole?.builtIn ? "Built-in roles cannot be deleted" : "Delete this role"}
+                  title={
+                    selectedRole?.builtIn
+                      ? "Les rôles intégrés ne peuvent pas être supprimés"
+                      : "Supprimer ce rôle"
+                  }
                   onClick={() => {
                     if (selectedRole && !selectedRole.builtIn)
                       setRoleToRemove(selectedRole);
                   }}
                 >
-                  <Trash2 className={`h-4 w-4 ${!selectedRole || selectedRole.builtIn ? "" : "text-destructive"}`} />
-                  <span className={!selectedRole || selectedRole.builtIn ? "" : "text-destructive"}>
-                    Delete role
+                  <Trash2
+                    className={`h-4 w-4 ${
+                      !selectedRole || selectedRole.builtIn ? "" : "text-destructive"
+                    }`}
+                  />
+                  <span
+                    className={
+                      !selectedRole || selectedRole.builtIn ? "" : "text-destructive"
+                    }
+                  >
+                    Supprimer le rôle
                   </span>
                 </Button>
               </CardContent>
             </Card>
           </div>
 
-          {/* Bottom row */}
+          {/* ── Bottom row ────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">
-                  Permission Distribution — {selectedRole?.name}
+                  Distribution des permissions — {selectedRole?.name}
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex items-center gap-6 p-4 pt-0">
@@ -1854,12 +2024,12 @@ function RolesPermissionsContent() {
                   <Donut
                     segments={[
                       {
-                        label: "Allowed",
+                        label: "Autorisé",
                         value: distribution.allowed,
                         color: "#10b981",
                       },
                       {
-                        label: "Denied",
+                        label: "Refusé",
                         value: distribution.denied,
                         color: "#f43f5e",
                       },
@@ -1878,14 +2048,14 @@ function RolesPermissionsContent() {
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                    <span className="text-muted-foreground">Allowed</span>
+                    <span className="text-muted-foreground">Autorisé</span>
                     <span className="ml-auto font-medium">
                       {pct(distribution.allowed)}% ({distribution.allowed})
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
-                    <span className="text-muted-foreground">Denied</span>
+                    <span className="text-muted-foreground">Refusé</span>
                     <span className="ml-auto font-medium">
                       {pct(distribution.denied)}% ({distribution.denied})
                     </span>
@@ -1904,15 +2074,15 @@ function RolesPermissionsContent() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">
-                  Members — {selectedRole?.name}
+                  Membres — {selectedRole?.name}
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4 pt-0 space-y-2 max-h-[220px] overflow-y-auto">
                 {roleMembers.length === 0 ? (
                   <p className="py-4 text-center text-xs text-muted-foreground">
                     {selectedRole?.builtIn
-                      ? "No users have this role."
-                      : "No employees assigned — add an employee with a matching job title."}
+                      ? "Aucun utilisateur n'a ce rôle."
+                      : "Aucun employé assigné — créez un employé avec ce titre de poste."}
                   </p>
                 ) : (
                   <>
@@ -1929,7 +2099,9 @@ function RolesPermissionsContent() {
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium truncate">{m.name}</p>
                           <p className="text-xs text-muted-foreground truncate">
-                            {m.kind === "employee" ? m.jobTitle : m.email || `@${m.username}`}
+                            {m.kind === "employee"
+                              ? m.jobTitle
+                              : m.email || `@${m.username}`}
                           </p>
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1937,7 +2109,7 @@ function RolesPermissionsContent() {
                             <>
                               <button
                                 type="button"
-                                title="View"
+                                title="Voir"
                                 onClick={() => {
                                   setViewUserTarget(m.raw);
                                   setViewUserOpen(true);
@@ -1948,7 +2120,7 @@ function RolesPermissionsContent() {
                               </button>
                               <button
                                 type="button"
-                                title="Edit role"
+                                title="Modifier le rôle"
                                 onClick={() => {
                                   setEditUserTarget(m.raw);
                                   setEditUserRoleOpen(true);
@@ -1961,7 +2133,7 @@ function RolesPermissionsContent() {
                           )}
                           {m.kind === "employee" && (
                             <Badge variant="outline" className="text-[9px]">
-                              Employee
+                              Employé
                             </Badge>
                           )}
                         </div>
@@ -1969,7 +2141,7 @@ function RolesPermissionsContent() {
                     ))}
                     {roleMembers.length > 6 && (
                       <p className="text-xs text-center text-muted-foreground pt-1">
-                        +{roleMembers.length - 6} more — use the Members tab above to see all
+                        +{roleMembers.length - 6} autres — utilisez l'onglet Membres ci-dessus pour voir tous
                       </p>
                     )}
                   </>

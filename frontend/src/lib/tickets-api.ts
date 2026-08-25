@@ -22,6 +22,10 @@ export type ApiTicket = {
   sla_status: SlaStatus;
   sla_remaining_minutes: number | null;
   resolved_at: string | null;
+  // S2: Archive fields
+  is_archived: boolean;
+  archived_at: string | null;
+  archived_by: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -170,4 +174,13 @@ export function formatSlaRemaining(minutes: number | null): string {
   if (minutes < 60) return `${minutes}m left`;
   if (minutes < 1440) return `${Math.floor(minutes / 60)}h left`;
   return `${Math.floor(minutes / 1440)}d left`;
+}
+// ── S2: Archive ───────────────────────────────────────────────────────────────
+
+export function archiveTicket(id: number): Promise<{ status: string; ticket: string }> {
+  return apiFetch(`/crm/tickets/${id}/archive/`, { method: "POST" });
+}
+
+export function unarchiveTicket(id: number): Promise<{ status: string; ticket: string }> {
+  return apiFetch(`/crm/tickets/${id}/unarchive/`, { method: "POST" });
 }

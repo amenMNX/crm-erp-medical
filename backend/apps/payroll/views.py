@@ -19,6 +19,8 @@ from .serializers import (
 
 class PayrollPermission(ReadOnlyOrRole):
     allowed_roles = ["admin", "hr", "accountant"]
+    # Must match the French name in RolePermission.write_permissions / frontend MODULES
+    module_label = "Paie"
 
 
 class EmployeeSalaryViewSet(viewsets.ModelViewSet):

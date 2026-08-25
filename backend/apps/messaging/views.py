@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from .models import Message, Notification
 from .serializers import MessageSerializer, NotificationSerializer
-
+from apps.accounts.permissions import MessagingPermission, AdminOnlyPermission  
 
 class NotificationViewSet(
     mixins.ListModelMixin,
@@ -14,7 +14,7 @@ class NotificationViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = NotificationSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MessagingPermission]
 
     def get_queryset(self):
         return Notification.objects.filter(recipient=self.request.user)
@@ -31,7 +31,7 @@ class NotificationViewSet(
 
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MessagingPermission]
 
     def get_queryset(self):
         user = self.request.user

@@ -1,6 +1,7 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { fetchCurrentUser } from "@/lib/me-api";
+import { fetchMyPermissions, canViewModule } from "@/lib/permissions-api";
 import { apiFetch } from "@/lib/api";
 import {
   // Dashboard
@@ -10,6 +11,7 @@ import {
   ActivitySquare,
   CalendarDays,
   CalendarFold,
+  Zap,
   // Support
   Ticket,
   AlertTriangle,
@@ -40,9 +42,6 @@ import {
   History,
   // Actions
   LogOut,
-  // Portal
-  Globe,
-  Zap,
 } from "lucide-react";
 import {
   Sidebar,
@@ -59,113 +58,97 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getAuthUser, logout } from "@/lib/auth";
 
-// Routes temporairement masquées (en développement)
-const routesToHideTemporarily = new Set<string>([]);
+// ── Route → module mapping ──────────────────────────────────────────────────
+// Each item declares:
+//   moduleName: the string stored in RolePermission.write_permissions
+//   hasWrite:   false means "always visible to authenticated users"
+//               true  means "only visible if moduleName is in user's write_permissions"
 
-// ── Structure du menu selon les modules du CDC ──────────────────────────────
+type NavItem = {
+  title: string;
+  url: string;
+  icon: React.ElementType;
+  moduleName: string;
+  hasWrite: boolean;
+  adminOnly?: boolean;
+};
 
-const menuSections = [
-  // ── Dashboard ──────────────────────────────────────────────────────────────
+const menuSections: { label: string; items: NavItem[] }[] = [
   {
     label: "Tableau de bord",
     items: [
-      { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+      { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, moduleName: "Dashboard", hasWrite: false },
     ],
   },
-
-  // ── Module CRM — Gestion du Parcours Patient ─────────────────────────────
   {
     label: "CRM — Patients & Traitements",
     items: [
-      { title: "Patients", url: "/patients", icon: Users },
-      { title: "Traitements", url: "/treatments", icon: ActivitySquare },
-      { title: "Protocoles", url: "/protocols", icon: Zap },
-      { title: "Calendrier", url: "/calendar", icon: CalendarDays },
-      { title: "Planning équipe", url: "/team-schedule", icon: CalendarFold },
+      { title: "Patients",       url: "/patients",     icon: Users,            moduleName: "Patients",         hasWrite: true },
+      { title: "Traitements",    url: "/treatments",   icon: ActivitySquare,   moduleName: "Traitements",      hasWrite: true },
+      { title: "Protocoles",     url: "/protocols",    icon: Zap,              moduleName: "Protocoles",       hasWrite: true },
+      { title: "Calendrier",     url: "/calendar",     icon: CalendarDays,     moduleName: "Calendrier",       hasWrite: true },
+      { title: "Planning équipe",url: "/team-schedule",icon: CalendarFold,     moduleName: "Planning équipe",  hasWrite: true },
     ],
   },
-
-  // ── Module CRM — Support, Tickets & Incidents ────────────────────────────
   {
     label: "Support & Incidents",
     items: [
-      { title: "Tickets", url: "/tickets", icon: Ticket },
-      { title: "Incidents", url: "/incidents", icon: AlertTriangle },
-      { title: "Réclamations", url: "/complaints", icon: MessageSquareWarning },
-      { title: "Messages", url: "/messages", icon: MessagesSquare },
-      { title: "Notifications", url: "/notifications", icon: Bell },
+      { title: "Tickets",       url: "/tickets",       icon: Ticket,              moduleName: "Tickets",       hasWrite: true },
+      { title: "Incidents",     url: "/incidents",     icon: AlertTriangle,       moduleName: "Incidents",     hasWrite: true },
+      { title: "Réclamations",  url: "/complaints",    icon: MessageSquareWarning,moduleName: "Réclamations",  hasWrite: true },
+      { title: "Messages",      url: "/messages",      icon: MessagesSquare,      moduleName: "Messages",      hasWrite: true },
+      { title: "Notifications", url: "/notifications", icon: Bell,                moduleName: "Notifications", hasWrite: false },
     ],
   },
-
-  // ── Module RH — Gestion des Ressources Humaines ──────────────────────────
   {
     label: "Ressources Humaines",
     items: [
-      { title: "Employés", url: "/employees", icon: UserCog },
-      { title: "Congés", url: "/leaves", icon: CalendarDays },
-      { title: "Absences", url: "/absences", icon: UserX },
-      { title: "Avances sur salaire", url: "/salary-advances", icon: Wallet },
-      { title: "Formations & Compétences", url: "/formations", icon: BookOpen },
+      { title: "Employés",              url: "/employees",      icon: UserCog,  moduleName: "Employés",               hasWrite: true },
+      { title: "Congés",                url: "/leaves",         icon: CalendarDays, moduleName: "Congés",             hasWrite: true },
+      { title: "Absences",              url: "/absences",       icon: UserX,    moduleName: "Absences",               hasWrite: true },
+      { title: "Avances sur salaire",   url: "/salary-advances",icon: Wallet,   moduleName: "Avances sur salaire",    hasWrite: true },
+      { title: "Formations & Compétences", url: "/formations",  icon: BookOpen, moduleName: "Formations & Compétences", hasWrite: true },
     ],
   },
-
-  // ── Module Comptabilité — Facturation & Finances ────────────────────────
   {
     label: "Comptabilité & Finances",
     items: [
-      { title: "Factures", url: "/invoices", icon: FileText },
-      { title: "Paiements", url: "/payments", icon: CreditCard },
-      { title: "CNAM", url: "/cnam", icon: ShieldPlus },
-      { title: "Abonnements", url: "/abonnements", icon: ArrowRightLeft },
-      { title: "Paie", url: "/payroll", icon: Coins },
-      { title: "Recouvrement", url: "/recouvrement", icon: TrendingDown },
+      { title: "Factures",     url: "/invoices",     icon: FileText,       moduleName: "Factures",     hasWrite: true },
+      { title: "Paiements",    url: "/payments",     icon: CreditCard,     moduleName: "Paiements",    hasWrite: true },
+      { title: "CNAM",         url: "/cnam",         icon: ShieldPlus,     moduleName: "CNAM",         hasWrite: true },
+      { title: "Abonnements",  url: "/abonnements",  icon: ArrowRightLeft, moduleName: "Abonnements",  hasWrite: true },
+      { title: "Paie",         url: "/payroll",      icon: Coins,          moduleName: "Paie",         hasWrite: true },
+      { title: "Recouvrement", url: "/recouvrement", icon: TrendingDown,   moduleName: "Recouvrement", hasWrite: true },
     ],
   },
   {
     label: "Stock et matériel",
     items: [
-      { title: "Stocks médicaux", url: "/stocks", icon: Package },
-      { title: "Équipements", url: "/equipment", icon: Wrench },
+      { title: "Stocks médicaux", url: "/stocks",    icon: Package, moduleName: "Stocks médicaux", hasWrite: true },
+      { title: "Équipements",     url: "/equipment", icon: Wrench,  moduleName: "Équipements",     hasWrite: true },
     ],
   },
-
-  // ── Dashboard & Business Intelligence ────────────────────────────────────
   {
     label: "Analytique & Rapports",
     items: [
-      { title: "Analytics", url: "/analytics", icon: BarChart3 },
-      { title: "Rapports", url: "/reports", icon: FileBarChart },
+      { title: "Analytics", url: "/analytics", icon: BarChart3,    moduleName: "Analytics", hasWrite: false },
+      { title: "Rapports",  url: "/reports",   icon: FileBarChart, moduleName: "Rapports",  hasWrite: false },
     ],
   },
-
-  // ── Administration, Rôles & Sécurité ─────────────────────────────────────
   {
     label: "Administration",
     items: [
-      { title: "Rôles & Permissions", url: "/roles_permission", icon: ShieldCheck },
-      { title: "Journal d'audit", url: "/historique", icon: History },
+      { title: "Rôles & Permissions", url: "/roles_permission", icon: ShieldCheck, moduleName: "Rôles & Permissions", hasWrite: false, adminOnly: true },
+      { title: "Journal d'audit",     url: "/historique",       icon: History,     moduleName: "Journal d'audit",     hasWrite: false, adminOnly: true },
     ],
   },
   {
     label: "Paramètres",
     items: [
-      { title: "Paramètres", url: "/settings", icon: Settings },
+      { title: "Paramètres", url: "/settings", icon: Settings, moduleName: "Paramètres", hasWrite: false },
     ],
   },
-
- /* // ── Portail Patient — accès staff ────────────────────────────────────────
-  {
-    label: "Portail Patient",
-    items: [
-      { title: "Espace Patient", url: "/patient/login", icon: Globe },
-    ],
-  },*/
-]
-  .map((section) => ({
-    ...section,
-    items: section.items.filter(({ url }) => !routesToHideTemporarily.has(url)),
-  }))
-  .filter((section) => section.items.length > 0);
+];
 
 // ── Composant principal ──────────────────────────────────────────────────────
 
@@ -174,7 +157,6 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const user = getAuthUser();
 
-  // Fetch current user role for conditional access
   const meQuery = useQuery({
     queryKey: ["current-user"],
     queryFn: fetchCurrentUser,
@@ -182,40 +164,43 @@ export function AppSidebar() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const isAdmin =
-    meQuery.data?.is_staff === true ||
-    meQuery.data?.profile?.role === "admin";
+  const permissionsQuery = useQuery({
+    queryKey: ["my-permissions"],
+    queryFn: fetchMyPermissions,
+    enabled: true,
+    staleTime: 30 * 1000,        // 30 s — matches app-shell; permissions must stay fresh
+    refetchOnWindowFocus: true,
+  });
 
-  // Masquer les routes admin pour les non-admin
+  const perms = permissionsQuery.data ?? null;
+  const isAdmin = perms?.is_admin ?? meQuery.data?.is_staff === true ?? false;
+
+  // Filter sections and items based on permissions
   const visibleSections = menuSections
     .map((section) => ({
       ...section,
-      items: section.items.filter(({ url }) =>
-        (url === "/roles_permission" || url === "/historique") ? isAdmin : true
-      ),
+      items: section.items.filter((item) => {
+        // Admin-only items (roles, audit log)
+        if (item.adminOnly) return isAdmin;
+        // Permission-gated items
+        return canViewModule(perms, item.moduleName, item.hasWrite);
+      }),
     }))
     .filter((section) => section.items.length > 0);
 
-  // ── Logout ──────────────────────────────────────────────────────────────────
-
   async function handleLogout() {
     try {
-      await apiFetch<void>("/accounts/logout/", {
-        method: "POST",
-      });
+      await apiFetch<void>("/accounts/logout/", { method: "POST" });
     } catch {
-      // Token already expired or removed server-side.
+      // already expired
     } finally {
       logout();
       navigate({ to: "/signin", replace: true });
     }
   }
 
-  // ── Rendu ──────────────────────────────────────────────────────────────────
-
   return (
     <Sidebar collapsible="icon">
-      {/* Header avec logo */}
       <SidebarHeader className="border-b">
         <div className="flex items-center gap-2 px-2 py-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-sm">
@@ -230,13 +215,10 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      {/* Contenu du menu */}
       <SidebarContent>
         {visibleSections.map((section) => (
           <SidebarGroup key={section.label}>
-            <SidebarGroupLabel>
-              {section.label}
-            </SidebarGroupLabel>
+            <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {section.items.map((item) => {
@@ -263,7 +245,6 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
 
-      {/* Footer avec utilisateur */}
       <SidebarFooter className="border-t">
         <div className="flex items-center gap-3 px-2 py-2">
           <Avatar className="h-9 w-9">
@@ -290,7 +271,6 @@ export function AppSidebar() {
             </button>
           </SidebarMenuButton>
         </div>
-        {/* Badge de rôle */}
         {meQuery.data?.profile?.role && (
           <div className="px-2 pb-1 group-data-[collapsible=icon]:hidden">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground bg-muted/50 px-2 py-0.5 rounded-full">

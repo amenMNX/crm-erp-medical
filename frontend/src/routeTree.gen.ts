@@ -13,6 +13,7 @@ import { Route as TreatmentsRouteImport } from './routes/treatments'
 import { Route as TicketsRouteImport } from './routes/tickets'
 import { Route as TeamScheduleRouteImport } from './routes/team-schedule'
 import { Route as StocksRouteImport } from './routes/stocks'
+import { Route as SocialEventsRouteImport } from './routes/social-events'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -21,6 +22,7 @@ import { Route as SalaryAdvancesRouteImport } from './routes/salary-advances'
 import { Route as Roles_permissionRouteImport } from './routes/roles_permission'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as RecruitmentRouteImport } from './routes/recruitment'
 import { Route as RecouvrementRouteImport } from './routes/recouvrement'
 import { Route as ProtocolsRouteImport } from './routes/protocols'
 import { Route as PortalRouteImport } from './routes/portal'
@@ -35,12 +37,14 @@ import { Route as FormationsRouteImport } from './routes/formations'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as EquipmentRouteImport } from './routes/equipment'
 import { Route as EmployeesRouteImport } from './routes/employees'
+import { Route as DocumentRequestsRouteImport } from './routes/document-requests'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
 import { Route as CnamRouteImport } from './routes/cnam'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as BoardRouteImport } from './routes/board'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
+import { Route as AccountingRouteImport } from './routes/accounting'
 import { Route as AbsencesRouteImport } from './routes/absences'
 import { Route as AbonnementsRouteImport } from './routes/abonnements'
 import { Route as IndexRouteImport } from './routes/index'
@@ -78,6 +82,11 @@ const TeamScheduleRoute = TeamScheduleRouteImport.update({
 const StocksRoute = StocksRouteImport.update({
   id: '/stocks',
   path: '/stocks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SocialEventsRoute = SocialEventsRouteImport.update({
+  id: '/social-events',
+  path: '/social-events',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -118,6 +127,11 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
 const ReportsRoute = ReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecruitmentRoute = RecruitmentRouteImport.update({
+  id: '/recruitment',
+  path: '/recruitment',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RecouvrementRoute = RecouvrementRouteImport.update({
@@ -190,6 +204,11 @@ const EmployeesRoute = EmployeesRouteImport.update({
   path: '/employees',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DocumentRequestsRoute = DocumentRequestsRouteImport.update({
+  id: '/document-requests',
+  path: '/document-requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -218,6 +237,11 @@ const BoardRoute = BoardRouteImport.update({
 const AnalyticsRoute = AnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountingRoute = AccountingRouteImport.update({
+  id: '/accounting',
+  path: '/accounting',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AbsencesRoute = AbsencesRouteImport.update({
@@ -317,12 +341,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/abonnements': typeof AbonnementsRoute
   '/absences': typeof AbsencesRoute
+  '/accounting': typeof AccountingRoute
   '/analytics': typeof AnalyticsRoute
   '/board': typeof BoardRoute
   '/calendar': typeof CalendarRoute
   '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
+  '/document-requests': typeof DocumentRequestsRoute
   '/employees': typeof EmployeesRoute
   '/equipment': typeof EquipmentRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -337,6 +363,7 @@ export interface FileRoutesByFullPath {
   '/portal': typeof PortalRoute
   '/protocols': typeof ProtocolsRoute
   '/recouvrement': typeof RecouvrementRoute
+  '/recruitment': typeof RecruitmentRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
@@ -345,6 +372,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/social-events': typeof SocialEventsRoute
   '/stocks': typeof StocksRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
@@ -369,12 +397,14 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/abonnements': typeof AbonnementsRoute
   '/absences': typeof AbsencesRoute
+  '/accounting': typeof AccountingRoute
   '/analytics': typeof AnalyticsRoute
   '/board': typeof BoardRoute
   '/calendar': typeof CalendarRoute
   '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
+  '/document-requests': typeof DocumentRequestsRoute
   '/employees': typeof EmployeesRoute
   '/equipment': typeof EquipmentRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -389,6 +419,7 @@ export interface FileRoutesByTo {
   '/portal': typeof PortalRoute
   '/protocols': typeof ProtocolsRoute
   '/recouvrement': typeof RecouvrementRoute
+  '/recruitment': typeof RecruitmentRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
@@ -397,6 +428,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/social-events': typeof SocialEventsRoute
   '/stocks': typeof StocksRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
@@ -422,12 +454,14 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/abonnements': typeof AbonnementsRoute
   '/absences': typeof AbsencesRoute
+  '/accounting': typeof AccountingRoute
   '/analytics': typeof AnalyticsRoute
   '/board': typeof BoardRoute
   '/calendar': typeof CalendarRoute
   '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
+  '/document-requests': typeof DocumentRequestsRoute
   '/employees': typeof EmployeesRoute
   '/equipment': typeof EquipmentRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -442,6 +476,7 @@ export interface FileRoutesById {
   '/portal': typeof PortalRoute
   '/protocols': typeof ProtocolsRoute
   '/recouvrement': typeof RecouvrementRoute
+  '/recruitment': typeof RecruitmentRoute
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
@@ -450,6 +485,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/social-events': typeof SocialEventsRoute
   '/stocks': typeof StocksRoute
   '/team-schedule': typeof TeamScheduleRoute
   '/tickets': typeof TicketsRoute
@@ -476,12 +512,14 @@ export interface FileRouteTypes {
     | '/'
     | '/abonnements'
     | '/absences'
+    | '/accounting'
     | '/analytics'
     | '/board'
     | '/calendar'
     | '/cnam'
     | '/complaints'
     | '/dashboard'
+    | '/document-requests'
     | '/employees'
     | '/equipment'
     | '/forgot-password'
@@ -496,6 +534,7 @@ export interface FileRouteTypes {
     | '/portal'
     | '/protocols'
     | '/recouvrement'
+    | '/recruitment'
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
@@ -504,6 +543,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/social-events'
     | '/stocks'
     | '/team-schedule'
     | '/tickets'
@@ -528,12 +568,14 @@ export interface FileRouteTypes {
     | '/'
     | '/abonnements'
     | '/absences'
+    | '/accounting'
     | '/analytics'
     | '/board'
     | '/calendar'
     | '/cnam'
     | '/complaints'
     | '/dashboard'
+    | '/document-requests'
     | '/employees'
     | '/equipment'
     | '/forgot-password'
@@ -548,6 +590,7 @@ export interface FileRouteTypes {
     | '/portal'
     | '/protocols'
     | '/recouvrement'
+    | '/recruitment'
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
@@ -556,6 +599,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/social-events'
     | '/stocks'
     | '/team-schedule'
     | '/tickets'
@@ -580,12 +624,14 @@ export interface FileRouteTypes {
     | '/'
     | '/abonnements'
     | '/absences'
+    | '/accounting'
     | '/analytics'
     | '/board'
     | '/calendar'
     | '/cnam'
     | '/complaints'
     | '/dashboard'
+    | '/document-requests'
     | '/employees'
     | '/equipment'
     | '/forgot-password'
@@ -600,6 +646,7 @@ export interface FileRouteTypes {
     | '/portal'
     | '/protocols'
     | '/recouvrement'
+    | '/recruitment'
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
@@ -608,6 +655,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/signup'
+    | '/social-events'
     | '/stocks'
     | '/team-schedule'
     | '/tickets'
@@ -633,12 +681,14 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AbonnementsRoute: typeof AbonnementsRoute
   AbsencesRoute: typeof AbsencesRoute
+  AccountingRoute: typeof AccountingRoute
   AnalyticsRoute: typeof AnalyticsRoute
   BoardRoute: typeof BoardRoute
   CalendarRoute: typeof CalendarRoute
   CnamRoute: typeof CnamRoute
   ComplaintsRoute: typeof ComplaintsRoute
   DashboardRoute: typeof DashboardRoute
+  DocumentRequestsRoute: typeof DocumentRequestsRoute
   EmployeesRoute: typeof EmployeesRoute
   EquipmentRoute: typeof EquipmentRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
@@ -653,6 +703,7 @@ export interface RootRouteChildren {
   PortalRoute: typeof PortalRoute
   ProtocolsRoute: typeof ProtocolsRoute
   RecouvrementRoute: typeof RecouvrementRoute
+  RecruitmentRoute: typeof RecruitmentRoute
   ReportsRoute: typeof ReportsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   Roles_permissionRoute: typeof Roles_permissionRoute
@@ -661,6 +712,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
+  SocialEventsRoute: typeof SocialEventsRoute
   StocksRoute: typeof StocksRoute
   TeamScheduleRoute: typeof TeamScheduleRoute
   TicketsRoute: typeof TicketsRoute
@@ -710,6 +762,13 @@ declare module '@tanstack/react-router' {
       path: '/stocks'
       fullPath: '/stocks'
       preLoaderRoute: typeof StocksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/social-events': {
+      id: '/social-events'
+      path: '/social-events'
+      fullPath: '/social-events'
+      preLoaderRoute: typeof SocialEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -766,6 +825,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/reports'
       preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recruitment': {
+      id: '/recruitment'
+      path: '/recruitment'
+      fullPath: '/recruitment'
+      preLoaderRoute: typeof RecruitmentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/recouvrement': {
@@ -866,6 +932,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmployeesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/document-requests': {
+      id: '/document-requests'
+      path: '/document-requests'
+      fullPath: '/document-requests'
+      preLoaderRoute: typeof DocumentRequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard': {
       id: '/dashboard'
       path: '/dashboard'
@@ -906,6 +979,13 @@ declare module '@tanstack/react-router' {
       path: '/analytics'
       fullPath: '/analytics'
       preLoaderRoute: typeof AnalyticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accounting': {
+      id: '/accounting'
+      path: '/accounting'
+      fullPath: '/accounting'
+      preLoaderRoute: typeof AccountingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/absences': {
@@ -1041,12 +1121,14 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AbonnementsRoute: AbonnementsRoute,
   AbsencesRoute: AbsencesRoute,
+  AccountingRoute: AccountingRoute,
   AnalyticsRoute: AnalyticsRoute,
   BoardRoute: BoardRoute,
   CalendarRoute: CalendarRoute,
   CnamRoute: CnamRoute,
   ComplaintsRoute: ComplaintsRoute,
   DashboardRoute: DashboardRoute,
+  DocumentRequestsRoute: DocumentRequestsRoute,
   EmployeesRoute: EmployeesRoute,
   EquipmentRoute: EquipmentRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
@@ -1061,6 +1143,7 @@ const rootRouteChildren: RootRouteChildren = {
   PortalRoute: PortalRoute,
   ProtocolsRoute: ProtocolsRoute,
   RecouvrementRoute: RecouvrementRoute,
+  RecruitmentRoute: RecruitmentRoute,
   ReportsRoute: ReportsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   Roles_permissionRoute: Roles_permissionRoute,
@@ -1069,6 +1152,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
+  SocialEventsRoute: SocialEventsRoute,
   StocksRoute: StocksRoute,
   TeamScheduleRoute: TeamScheduleRoute,
   TicketsRoute: TicketsRoute,

@@ -1,4 +1,5 @@
 # apps/accounts/urls.py
+
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .views import (
@@ -14,14 +15,17 @@ from .views import (
     UserViewSet,
     RolePermissionViewSet,
     AllRolePermissionsView,
-    SuperAdminCheckView,  
+    SuperAdminCheckView,
+    PermissionCheckView,
+    MyPermissionsView,
+    DepartmentViewSet,
 )
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
 router.register("custom-roles", CustomRoleViewSet, basename="custom-role")
 router.register("role-permissions", RolePermissionViewSet, basename="role-permission")
-
+router.register("departments", DepartmentViewSet, basename="department") 
 urlpatterns = [
     path("me/", CurrentUserView.as_view(), name="current-user"),
     path("register/", RegisterView.as_view(), name="register"),
@@ -37,5 +41,7 @@ urlpatterns = [
     ),
     path("all-role-permissions/", AllRolePermissionsView.as_view(), name="all-role-permissions"),
     path('super-admin/check/', SuperAdminCheckView.as_view(), name='super-admin-check'),
+    path('permission-check/', PermissionCheckView.as_view(), name='permission-check'),
+    path('my-permissions/', MyPermissionsView.as_view(), name='my-permissions'),
     path("", include(router.urls)),
 ]

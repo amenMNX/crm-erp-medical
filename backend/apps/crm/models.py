@@ -535,6 +535,20 @@ class Ticket(models.Model):
     # resolved_at: set automatically when statut transitions to Résolu or Fermé.
     resolved_at = models.DateTimeField(null=True, blank=True)
 
+    # ── Archive fields (S2) ───────────────────────────────────────────────────
+    is_archived = models.BooleanField(
+        default=False,
+        help_text="Ticket archivé (visible uniquement par le Directeur Support).",
+    )
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="archived_tickets",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
