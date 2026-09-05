@@ -1,8 +1,10 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
   CalendarDays,
+  CheckCircle2,
   Loader2,
   Pencil,
   Plus,
@@ -12,6 +14,7 @@ import {
   Users,
   UserX,
   Wallet,
+  XCircle,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -45,12 +48,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  checkEmployeeNumber,
   createEmployee,
   deleteEmployee,
   fetchEmployees,
   updateEmployee,
   type ApiEmployee,
   type ContractType,
+  type EmployeeNumberCheckResult,
 } from "@/lib/employees-api";
 
 export const Route = createFileRoute("/employees")({
@@ -120,6 +125,52 @@ function EmployeesPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<ApiEmployee | null>(null);
+
+  // ── Real-time employee-number uniqueness check ────────────────────────────
+  // "idle"   → field untouched / just cleared
+  // "checking" → debounce timer running or fetch in-flight
+  // "available" | "taken" → server responded
+  type EmpNumState = "idle" | "checking" | "available" | "taken";
+  const [empNumState, setEmpNumState] = useState<EmpNumState>("idle");
+  const [empNumConflict, setEmpNumConflict] = useState<{ id: number; name: string } | null>(null);
+  const empNumTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const checkEmpNumber = useCallback(
+    (value: string) => {
+      if (empNumTimer.current) clearTimeout(empNumTimer.current);
+      const trimmed = value.trim();
+      if (!trimmed) {
+        setEmpNumState("idle");
+        setEmpNumConflict(null);
+        return;
+      }
+      setEmpNumState("checking");
+      empNumTimer.current = setTimeout(async () => {
+        try {
+          const result = await checkEmployeeNumber(trimmed, editingEmployee?.id);
+          if (result.available) {
+            setEmpNumState("available");
+            setEmpNumConflict(null);
+          } else {
+            setEmpNumState("taken");
+            setEmpNumConflict({ id: result.conflict_id, name: result.conflict_name });
+          }
+        } catch {
+          // Network error — don't block the user, just go idle
+          setEmpNumState("idle");
+          setEmpNumConflict(null);
+        }
+      }, 400);
+    },
+    [editingEmployee?.id],
+  );
+
+  // Reset check state whenever the dialog opens or the edited employee changes
+  useEffect(() => {
+    setEmpNumState("idle");
+    setEmpNumConflict(null);
+    if (empNumTimer.current) clearTimeout(empNumTimer.current);
+  }, [open, editingEmployee?.id]);
 
   const employeesQuery = useQuery({
     queryKey: ["employees"],
@@ -219,6 +270,7 @@ function EmployeesPage() {
     const notes = String(formData.get("notes") ?? "").trim();
 
     if (!employeeNumber || !firstName || !lastName || !jobTitle) return;
+    if (empNumState === "taken") return; // duplicate ID — field is showing the error
 
     const payload = {
       employee_number: employeeNumber,
@@ -285,13 +337,46 @@ function EmployeesPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="block">
                   <span className="text-sm font-medium text-foreground">Employee number</span>
-                  <Input
-                    name="employee_number"
-                    placeholder="EMP-001"
-                    defaultValue={editingEmployee?.employee_number ?? ""}
-                    required
-                    className="mt-2"
-                  />
+                  <div className="relative mt-2">
+                    <Input
+                      name="employee_number"
+                      placeholder="EMP-001"
+                      defaultValue={editingEmployee?.employee_number ?? ""}
+                      required
+                      onChange={(e) => checkEmpNumber(e.target.value)}
+                      className={
+                        empNumState === "taken"
+                          ? "border-destructive pr-9 focus-visible:ring-destructive"
+                          : empNumState === "available"
+                            ? "border-success pr-9 focus-visible:ring-success"
+                            : "pr-9"
+                      }
+                    />
+                    {/* status icon inside the input */}
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                      {empNumState === "checking" && (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      )}
+                      {empNumState === "available" && (
+                        <CheckCircle2 className="h-4 w-4 text-success" />
+                      )}
+                      {empNumState === "taken" && (
+                        <XCircle className="h-4 w-4 text-destructive" />
+                      )}
+                    </span>
+                  </div>
+                  {/* inline conflict message */}
+                  {empNumState === "taken" && empNumConflict && (
+                    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-destructive">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      Already used by{" "}
+                      <strong>{empNumConflict.name}</strong>
+                      {" "}(#{empNumConflict.id})
+                    </p>
+                  )}
+                  {empNumState === "available" && (
+                    <p className="mt-1.5 text-xs text-success">Available ✓</p>
+                  )}
                 </label>
                 <label className="block">
                   <span className="text-sm font-medium text-foreground">Job title</span>
@@ -487,7 +572,7 @@ function EmployeesPage() {
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={mutationPending}>
+                <Button type="submit" disabled={mutationPending || empNumState === "checking" || empNumState === "taken"}>
                   {editingEmployee ? "Save Changes" : "Add Employee"}
                 </Button>
               </DialogFooter>

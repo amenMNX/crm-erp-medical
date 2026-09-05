@@ -15,7 +15,6 @@ class ApiDocsView(APIView):
                 "roles": [
                     "admin",
                     "doctor",
-                    "radiotherapist",
                     "secretary",
                     "accountant",
                     "hr",
@@ -23,7 +22,7 @@ class ApiDocsView(APIView):
                 "permissions": {
                     "crm": {
                         "read": "authenticated",
-                        "write": ["admin", "doctor", "secretary", "radiotherapist"],
+                        "write": ["admin", "doctor", "secretary"],
                     },
                     "hr": {
                         "read": "authenticated",

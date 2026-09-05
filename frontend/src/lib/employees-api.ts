@@ -38,15 +38,28 @@ export type ApiEmployee = {
   updated_at: string;
 };
 
-type Paginated<T> = { results: T[]; count: number } | T[];
+type Paginated<T> = { results: T[]; count: number; next?: string | null } | T[];
 
-function unwrap<T>(data: Paginated<T>): T[] {
-  return Array.isArray(data) ? data : data.results;
+function unwrap<T>(data: Paginated<T>): { items: T[]; next: string | null } {
+  if (Array.isArray(data)) return { items: data, next: null };
+  return { items: data.results, next: data.next ?? null };
 }
 
 export async function fetchEmployees(): Promise<ApiEmployee[]> {
-  const data = await apiFetch<Paginated<ApiEmployee>>("/hr/employees/");
-  return unwrap(data);
+  const all: ApiEmployee[] = [];
+  // The backend paginates; fetch every page so no employee is ever missing.
+  let path: string | null = "/hr/employees/";
+  while (path) {
+    // Strip the /api prefix if the next URL is absolute (Django returns full URLs)
+    const relative = path.startsWith("http")
+      ? path.replace(/^https?:\/\/[^\/]+\/api/, "")
+      : path;
+    const data = await apiFetch<Paginated<ApiEmployee>>(relative);
+    const { items, next } = unwrap(data);
+    all.push(...items);
+    path = next;
+  }
+  return all;
 }
 
 export type EmployeeWritePayload = {
@@ -130,4 +143,22 @@ export function linkEmployeeUser(
     method: "POST",
     body: userId != null ? { user_id: userId } : {},
   });
+}
+export type EmployeeNumberCheckResult =
+  | { available: true }
+  | { available: false; conflict_id: number; conflict_name: string };
+
+/**
+ * Check whether an employee_number is already taken.
+ * Pass excludeId when editing so the employee's own number doesn't conflict.
+ */
+export async function checkEmployeeNumber(
+  value: string,
+  excludeId?: number,
+): Promise<EmployeeNumberCheckResult> {
+  const params = new URLSearchParams({ value });
+  if (excludeId != null) params.set("exclude_id", String(excludeId));
+  return apiFetch<EmployeeNumberCheckResult>(
+    `/hr/employees/check-employee-number/?${params}`,
+  );
 }

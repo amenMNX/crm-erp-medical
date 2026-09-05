@@ -1,7 +1,7 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, useRef, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Plus, Search } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -33,6 +44,7 @@ import {
 } from "@/components/ui/table";
 import {
   createComplaint,
+  deleteComplaint,
   fetchComplaints,
   updateComplaint,
   type ApiComplaint,
@@ -58,35 +70,36 @@ function ComplaintsPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [open, setOpen] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      formRef.current?.reset();
+    }
+  }, [open]);
 
   const complaintsQuery = useQuery({
     queryKey: ["complaints"],
     queryFn: fetchComplaints,
     retry: 1,
-    staleTime: 1000 * 60, // 1 minute
+    staleTime: 1000 * 60,
   });
 
   const patientsQuery = useQuery({
     queryKey: ["patients"],
     queryFn: fetchPatients,
     retry: 1,
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    staleTime: 1000 * 60 * 5,
   });
 
-  // Properly typed data with fallbacks
-  const complaints = (complaintsQuery.data ?? []) as ApiComplaint[];
-  const patients = (patientsQuery.data ?? []) as ApiPatient[];
+  const complaints = complaintsQuery.data ?? [];
+  const patients = patientsQuery.data ?? [];
 
   const hasError = complaintsQuery.isError || patientsQuery.isError;
   const isLoading = complaintsQuery.isLoading || patientsQuery.isLoading;
 
-  // Log errors for debugging
-  if (complaintsQuery.error) {
-    console.error("Complaints error:", complaintsQuery.error);
-  }
-  if (patientsQuery.error) {
-    console.error("Patients error:", patientsQuery.error);
-  }
+  if (complaintsQuery.error) console.error("Complaints error:", complaintsQuery.error);
+  if (patientsQuery.error) console.error("Patients error:", patientsQuery.error);
 
   const createMutation = useMutation({
     mutationFn: createComplaint,
@@ -94,9 +107,7 @@ function ComplaintsPage() {
       queryClient.invalidateQueries({ queryKey: ["complaints"] });
       setOpen(false);
     },
-    onError: (error) => {
-      console.error("Failed to create complaint:", error);
-    },
+    onError: (error) => console.error("Failed to create complaint:", error),
   });
 
   const updateMutation = useMutation({
@@ -105,46 +116,42 @@ function ComplaintsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["complaints"] });
     },
-    onError: (error) => {
-      console.error("Failed to update complaint:", error);
+    onError: (error) => console.error("Failed to update complaint:", error),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteComplaint,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["complaints"] });
     },
+    onError: (error) => console.error("Failed to delete complaint:", error),
   });
 
   const filteredComplaints = useMemo(() => {
     const q = query.trim().toLowerCase();
-
     return complaints.filter((complaint) => {
       const matchesQuery =
         !q ||
         (complaint.client_name?.toLowerCase() || "").includes(q) ||
         (complaint.description?.toLowerCase() || "").includes(q);
-
       const matchesStatus = statusFilter === "all" || complaint.statut === statusFilter;
-
       return matchesQuery && matchesStatus;
     });
   }, [complaints, query, statusFilter]);
 
   function addComplaint(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     const formData = new FormData(event.currentTarget);
     const client = Number(formData.get("client"));
     const description = String(formData.get("description") ?? "").trim();
-
     if (!client || !description) return;
-
-    createMutation.mutate({
-      client,
-      description,
-    });
+    createMutation.mutate({ client, description });
   }
 
   function updateStatus(id: number, statut: ComplaintStatus) {
     updateMutation.mutate({ id, statut });
   }
 
-  // Show error state
   if (hasError) {
     return (
       <AppShell title="Réclamations">
@@ -156,9 +163,7 @@ function ComplaintsPage() {
               <p className="text-sm text-muted-foreground text-center max-w-md">
                 There was a problem loading the data. Please try refreshing the page.
               </p>
-              <Button onClick={() => window.location.reload()}>
-                Refresh Page
-              </Button>
+              <Button onClick={() => window.location.reload()}>Refresh Page</Button>
             </div>
           </CardContent>
         </Card>
@@ -176,13 +181,14 @@ function ComplaintsPage() {
               <Plus className="h-4 w-4" /> Add Complaint
             </Button>
           </DialogTrigger>
-
-          <DialogContent>
-            <form onSubmit={addComplaint} className="space-y-5">
+          <DialogContent aria-describedby="create-complaint-description">
+            <form ref={formRef} onSubmit={addComplaint} className="space-y-5">
               <DialogHeader>
                 <DialogTitle>Create complaint</DialogTitle>
               </DialogHeader>
-
+              <p id="create-complaint-description" className="sr-only">
+                Fill in the client and description to create a new complaint.
+              </p>
               <Select name="client" required>
                 <SelectTrigger>
                   <SelectValue placeholder="Client / patient" />
@@ -195,13 +201,13 @@ function ComplaintsPage() {
                       </SelectItem>
                     ))
                   ) : (
-                    <SelectItem value="" disabled>No patients available</SelectItem>
+                    <SelectItem key="no-patients" value="" disabled>
+                      No patients available
+                    </SelectItem>
                   )}
                 </SelectContent>
               </Select>
-
               <Textarea name="description" placeholder="Complaint description" required />
-
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                   Cancel
@@ -225,11 +231,11 @@ function ComplaintsPage() {
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search complaint..."
                 className="pl-9"
+                aria-label="Search complaints"
               />
             </div>
-
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger>
+              <SelectTrigger aria-label="Filter by status">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -254,17 +260,19 @@ function ComplaintsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>ID</TableHead>
                     <TableHead>Client</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Update status</TableHead>
                     <TableHead>Date</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
-
                 <TableBody>
                   {filteredComplaints.map((complaint) => (
                     <TableRow key={complaint.id}>
+                      <TableCell className="font-medium">{complaint.id}</TableCell>
                       <TableCell className="font-medium">{complaint.client_name}</TableCell>
                       <TableCell className="max-w-md">{complaint.description}</TableCell>
                       <TableCell>
@@ -279,7 +287,7 @@ function ComplaintsPage() {
                             updateStatus(complaint.id, value as ComplaintStatus)
                           }
                         >
-                          <SelectTrigger className="w-[170px]">
+                          <SelectTrigger className="w-[170px]" aria-label="Update status">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -292,18 +300,51 @@ function ComplaintsPage() {
                         </Select>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {complaint.created_at?.slice(0, 10) || "-"}
+                        {complaint.created_at
+                          ? new Date(complaint.created_at).toLocaleDateString()
+                          : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              disabled={deleteMutation.isPending}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This action cannot be undone. This will permanently delete the
+                                complaint.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteMutation.mutate(complaint.id)}
+                                disabled={deleteMutation.isPending}
+                              >
+                                {deleteMutation.isPending ? "Deleting..." : "Delete"}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </TableCell>
                     </TableRow>
                   ))}
-
                   {filteredComplaints.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                         {query || statusFilter !== "all" ? (
                           <div className="flex flex-col items-center gap-2">
                             <p>No complaints match these filters.</p>
                             <Button
+                              type="button"
                               variant="link"
                               onClick={() => {
                                 setQuery("");

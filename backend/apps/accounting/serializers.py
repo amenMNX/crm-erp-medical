@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import CNAMClaim, DunningAction, Invoice, InvoiceLineItem, Payment, SubscriptionPlan, SubscriptionChange, OutgoingPayment
@@ -26,6 +28,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
     days_overdue = serializers.IntegerField(read_only=True)
     dunning_stage = serializers.CharField(read_only=True)
     doubtful_provision_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    # Surfaced from Patient so the frontend can display the scheme without a
+    # second API call.
+    patient_cnam_scheme = serializers.CharField(source="patient.cnam_scheme", read_only=True)
+    patient_cnam_scheme_display = serializers.CharField(
+        source="patient.get_cnam_scheme_display", read_only=True
+    )
     line_items = InvoiceLineItemSerializer(many=True, required=False)
 
     class Meta:
@@ -34,6 +42,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "id",
             "patient",
             "patient_name",
+            "patient_cnam_scheme",
+            "patient_cnam_scheme_display",
             "treatment_plan",
             "treatment_plan_name",
             "invoice_number",
@@ -43,6 +53,9 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "subtotal",
             "tax_amount",
             "total_amount",
+            "patient_share",
+            "cnam_share",
+            "is_apci",
             "paid_amount",
             "balance_due",
             "days_overdue",
@@ -56,6 +69,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "patient_name",
+            "patient_cnam_scheme",
+            "patient_cnam_scheme_display",
             "treatment_plan_name",
             "invoice_number",
             "subtotal",
@@ -66,6 +81,19 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def validate(self, data):
+        patient_share = data.get("patient_share", self.instance.patient_share if self.instance else Decimal("0.00"))
+        cnam_share = data.get("cnam_share", self.instance.cnam_share if self.instance else Decimal("0.00"))
+        is_apci = data.get("is_apci", self.instance.is_apci if self.instance else False)
+
+        # Enforce APCI rule: no ticket modérateur when APCI is flagged.
+        if is_apci and patient_share > Decimal("0.00"):
+            raise serializers.ValidationError(
+                {"patient_share": "Une facture APCI est prise en charge à 100 % : le patient ne paie pas de ticket modérateur (patient_share doit être 0)."}
+            )
+
+        return data
 
     def create(self, validated_data):
         line_items_data = validated_data.pop("line_items", [])
@@ -252,140 +280,3 @@ class OutgoingPaymentSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "reference", "category_display", "method_display", "created_at", "updated_at"]
-
-# ── S8: General Ledger Serializers ────────────────────────────────────────────
-
-from .models import ChartOfAccount, Journal, JournalEntry, JournalLine
-
-
-class ChartOfAccountSerializer(serializers.ModelSerializer):
-    level                = serializers.IntegerField(read_only=True)
-    parent_name          = serializers.CharField(source="parent.name", read_only=True)
-    account_type_display = serializers.CharField(source="get_account_type_display", read_only=True)
-
-    class Meta:
-        model = ChartOfAccount
-        fields = [
-            "id", "code", "name", "parent", "parent_name",
-            "account_type", "account_type_display", "normal_balance",
-            "is_active", "is_analytical", "description", "level",
-            "created_at", "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-
-class JournalSerializer(serializers.ModelSerializer):
-    journal_type_display = serializers.CharField(source="get_journal_type_display", read_only=True)
-    entry_count          = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Journal
-        fields = [
-            "id", "code", "name", "journal_type", "journal_type_display",
-            "is_active", "description", "entry_count", "created_at", "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-    def get_entry_count(self, obj):
-        return obj.entries.count()
-
-
-class JournalLineSerializer(serializers.ModelSerializer):
-    account_code = serializers.CharField(source="account.code", read_only=True)
-    account_name = serializers.CharField(source="account.name", read_only=True)
-
-    class Meta:
-        model = JournalLine
-        fields = [
-            "id", "entry", "account", "account_code", "account_name",
-            "debit", "credit", "description", "analytical_code", "created_at",
-        ]
-        read_only_fields = ["id", "created_at"]
-
-    def validate(self, data):
-        has_d = data.get("debit",  0) and data["debit"]  > 0
-        has_c = data.get("credit", 0) and data["credit"] > 0
-        if has_d and has_c:
-            raise serializers.ValidationError("Une ligne ne peut pas avoir à la fois un débit et un crédit.")
-        if not has_d and not has_c:
-            raise serializers.ValidationError("Une ligne doit avoir un débit ou un crédit.")
-        return data
-
-
-class JournalEntrySerializer(serializers.ModelSerializer):
-    journal_code      = serializers.CharField(source="journal.code", read_only=True)
-    journal_name      = serializers.CharField(source="journal.name", read_only=True)
-    created_by_name   = serializers.CharField(source="created_by.username", read_only=True)
-    validated_by_name = serializers.CharField(source="validated_by.username", read_only=True)
-    is_balanced       = serializers.BooleanField(read_only=True)
-    line_count        = serializers.IntegerField(read_only=True)
-    lines             = JournalLineSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = JournalEntry
-        fields = [
-            "id", "entry_number", "journal", "journal_code", "journal_name",
-            "entry_date", "description", "reference", "invoice", "payment",
-            "total_debit", "total_credit", "is_balanced", "line_count",
-            "status", "created_by", "created_by_name",
-            "validated_by", "validated_by_name",
-            "posted_at", "created_at", "updated_at", "lines",
-        ]
-        read_only_fields = [
-            "id", "entry_number", "total_debit", "total_credit",
-            "created_by", "posted_at", "created_at", "updated_at",
-        ]
-
-
-class JournalEntryCreateSerializer(serializers.Serializer):
-    journal_id  = serializers.IntegerField()
-    entry_date  = serializers.DateField()
-    description = serializers.CharField()
-    reference   = serializers.CharField(required=False, allow_blank=True, default="")
-    invoice_id  = serializers.IntegerField(required=False, allow_null=True, default=None)
-    payment_id  = serializers.IntegerField(required=False, allow_null=True, default=None)
-    lines       = serializers.ListField(child=serializers.DictField(), min_length=2)
-
-    def validate_lines(self, value):
-        total_d = total_c = 0
-        for line in value:
-            d = float(line.get("debit",  0) or 0)
-            c = float(line.get("credit", 0) or 0)
-            if d > 0 and c > 0:
-                raise serializers.ValidationError("Une ligne ne peut pas avoir débit ET crédit.")
-            if d == 0 and c == 0:
-                raise serializers.ValidationError("Chaque ligne doit avoir un débit ou un crédit.")
-            if not line.get("account"):
-                raise serializers.ValidationError("Chaque ligne doit avoir un compte.")
-            total_d += d
-            total_c += c
-        if round(total_d, 3) != round(total_c, 3):
-            raise serializers.ValidationError(
-                f"Écriture déséquilibrée — Débit: {total_d:.3f}, Crédit: {total_c:.3f}"
-            )
-        return value
-
-    def create(self, validated_data):
-        from django.db import transaction
-        lines_data = validated_data.pop("lines")
-        with transaction.atomic():
-            entry = JournalEntry.objects.create(
-                journal_id  = validated_data["journal_id"],
-                entry_date  = validated_data["entry_date"],
-                description = validated_data["description"],
-                reference   = validated_data.get("reference", ""),
-                invoice_id  = validated_data.get("invoice_id"),
-                payment_id  = validated_data.get("payment_id"),
-                created_by  = self.context["request"].user,
-                status      = JournalEntry.Status.DRAFT,
-            )
-            for ld in lines_data:
-                JournalLine.objects.create(
-                    entry           = entry,
-                    account_id      = ld["account"],
-                    debit           = ld.get("debit",  0) or 0,
-                    credit          = ld.get("credit", 0) or 0,
-                    description     = ld.get("description", ""),
-                    analytical_code = ld.get("analytical_code", ""),
-                )
-        return entry

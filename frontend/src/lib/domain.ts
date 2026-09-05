@@ -2,7 +2,6 @@
 export type UserRole =
   | "admin"
   | "doctor"
-  | "radiotherapist"
   | "secretary"
   | "accountant"
   | "hr"
@@ -14,7 +13,6 @@ export type UserRole =
 export const roleLabels: Record<UserRole, string> = {
   admin: "Administrateur",
   doctor: "Médecin",
-  radiotherapist: "Radiothérapeute",
   secretary: "Secrétaire",
   accountant: "Comptable",
   hr: "Responsable RH",

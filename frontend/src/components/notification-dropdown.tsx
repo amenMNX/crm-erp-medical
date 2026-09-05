@@ -38,7 +38,13 @@ export function NotificationDropdown() {
   const notificationsQuery = useQuery({
     queryKey: ["notifications"],
     queryFn: fetchNotifications,
-    refetchInterval: 30000,
+    // Poll every 60 s — 30 s was causing log spam from the tight interval
+    // combining with window-focus refetches.
+    refetchInterval: 60_000,
+    // Re-fetch when the tab regains focus so the badge stays accurate,
+    // but only when the data is already stale (> 60 s old).
+    refetchOnWindowFocus: true,
+    staleTime: 60_000,
   });
   const notifications = notificationsQuery.data ?? [];
   const unreadCount = notifications.filter((n) => !n.is_read).length;

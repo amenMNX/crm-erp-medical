@@ -14,8 +14,9 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.utils import timezone
-from django.core.mail import send_mail
 from django.conf import settings
+from django.core.mail import send_mail
+
 from apps.accounts.permissions import ReadOnlyOrRole
 from apps.audit.mixins import AuditLoggingMixin
 from apps.audit.models import AuditLogEntry
@@ -34,6 +35,9 @@ from .models import (
     PatientRating,
     PortalMessage,
     Room,
+    RoomBooking,
+    OperationStaff,
+    OperationBooking,
     Ticket,
     TicketComment,
     TreatmentPlan,
@@ -70,6 +74,9 @@ from .serializers import (
     PublicTicketStatusSerializer,
     PublicTicketSubmitSerializer,
     RoomSerializer,
+    RoomBookingSerializer,
+    OperationBookingSerializer,
+    OperationStaffSerializer,
     StaffReplySerializer,
     TicketCommentSerializer,
     TicketSerializer,
@@ -80,20 +87,13 @@ from .serializers import (
     DoseDeviationSerializer,
     MaintenanceLogSerializer,
 )
-from apps.accounts.permissions import (
-    CrmPermission, 
-    TicketPermission, 
-    IsAdminRole, 
-    IsSuperAdmin,
-    AdminOnlyPermission
-)
-from .apt_scheduling import book_slot, handle_cancellation, suggest_slots
+from .apt_scheduling import book_slot, handle_cancellation, suggest_slots, _is_slot_free
 # =============================================================================
 # PERMISSION CLASSES
 # =============================================================================
 
 class CrmPermission(ReadOnlyOrRole):
-    allowed_roles = ["admin", "doctor", "secretary", "radiotherapist"]
+    allowed_roles = ["admin", "doctor", "secretary"]
     module_label  = "Patients"
 
 
@@ -115,7 +115,7 @@ class PatientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     - Search/filter capabilities on patient fields
     - Custom 360° endpoint for complete patient dossier
     
-    Permissions: CrmPermission (admin, doctor, secretary, radiotherapist)
+    Permissions: CrmPermission (admin, doctor, secretary)
     Audit: Tracks changes to patient data
     """
     
@@ -226,7 +226,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     Provides standard CRUD operations with filtering and search capabilities.
     Appointments link patients to scheduled medical visits.
     
-    Permissions: CrmPermission (admin, doctor, secretary, radiotherapist)
+    Permissions: CrmPermission (admin, doctor, secretary)
     Filters: status, patient
     Search: title, reason, notes, patient names
     Ordering: appointment_date, created_at
@@ -254,7 +254,7 @@ class TreatmentPlanViewSet(viewsets.ModelViewSet):
     - Session tracking
     - Status management (active, completed, paused)
     
-    Permissions: CrmPermission (admin, doctor, secretary, radiotherapist)
+    Permissions: CrmPermission (admin, doctor, secretary)
     Filters: status, patient
     Search: name, diagnosis, protocol, patient names
     Ordering: created_at, start_date, end_date
@@ -281,7 +281,7 @@ class MachineViewSet(viewsets.ModelViewSet):
     permission_classes = [CrmPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["status"]
-    search_fields = ["name", "model", "serial_number", "manufacturer"]
+    search_fields = ["name", "model", "serial_number", "manufacturer", "room__name"]
     ordering_fields = ["name", "status", "purchase_date", "next_calibration_date"]
 
     @action(detail=False, methods=["get"])
@@ -325,16 +325,199 @@ class MaintenanceLogViewSet(viewsets.ModelViewSet):
 
 
 class RoomViewSet(viewsets.ModelViewSet):
-    """Manage treatment rooms."""
-    
+    """
+    CRUD for rooms.
+    GET  /crm/rooms/                — list all rooms
+    GET  /crm/rooms/{id}/           — room detail
+    GET  /crm/rooms/{id}/bookings/  — bookings for a specific room
+    GET  /crm/rooms/availability/   — rooms with live availability status
+    POST /crm/rooms/                — create room
+    """
     queryset = Room.objects.all()
     serializer_class = RoomSerializer
     permission_classes = [CrmPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["status"]
-    search_fields = ["name"]
-    ordering_fields = ["name", "status"]
+    filterset_fields = ["status", "usage"]
+    search_fields    = ["name", "location", "specialty"]
+    ordering_fields  = ["name", "status", "capacity", "usage"]
 
+    @action(detail=False, methods=["get"], url_path="availability")
+    def availability(self, request):
+        """Returns rooms with real-time availability for a given datetime window.
+        Query params: start, end (ISO 8601, defaults: now, now+1h)
+        """
+        from django.utils import timezone
+        from django.utils.dateparse import parse_datetime
+
+        now   = timezone.now()
+        start = parse_datetime(request.query_params.get("start", "")) or now
+        end   = parse_datetime(request.query_params.get("end",   "")) or (
+            start + timezone.timedelta(hours=1)
+        )
+
+        busy_room_ids = set(
+            RoomBooking.objects.filter(
+                status__in=["confirmed", "pending"],
+                start_datetime__lt=end,
+                end_datetime__gt=start,
+            ).values_list("room_id", flat=True)
+        )
+
+        rooms = Room.objects.all()
+        data  = []
+        for room in rooms:
+            s = RoomSerializer(room, context=self.get_serializer_context()).data
+            s["available_for_window"] = (
+                room.status == Room.Status.ACTIVE and room.pk not in busy_room_ids
+            )
+            data.append(s)
+        return Response(data)
+
+    @action(detail=True, methods=["get"], url_path="bookings")
+    def bookings(self, request, pk=None):
+        """List all bookings for a specific room."""
+        room = self.get_object()
+        qs   = room.bookings.select_related("patient", "booked_by").order_by("-start_datetime")
+        serializer = RoomBookingSerializer(qs, many=True, context=self.get_serializer_context())
+        return Response(serializer.data)
+
+
+class RoomBookingViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for room bookings.
+    GET    /crm/room-bookings/           — all bookings
+    POST   /crm/room-bookings/          — create a booking
+    PATCH  /crm/room-bookings/{id}/     — update
+    DELETE /crm/room-bookings/{id}/     — cancel / delete
+    GET    /crm/room-bookings/calendar/ — bookings in a date range
+    """
+    queryset = RoomBooking.objects.select_related("room", "patient", "booked_by").all()
+    serializer_class = RoomBookingSerializer
+    permission_classes = [CrmPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["room", "patient", "status"]
+    search_fields    = ["patient__first_name", "patient__last_name", "room__name", "reason"]
+    ordering_fields  = ["start_datetime", "end_datetime", "status"]
+
+    def perform_create(self, serializer):
+        booking = serializer.save(booked_by=self.request.user)
+        self._conflict_detected = booking.has_conflict()
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        data    = dict(serializer.data)
+        if getattr(self, "_conflict_detected", False):
+            data["conflict_warning"] = "Cette salle a déjà une réservation sur ce créneau."
+        return Response(data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=False, methods=["get"], url_path="calendar")
+    def calendar(self, request):
+        """Returns bookings within a date range. Query params: start, end."""
+        from django.utils.dateparse import parse_datetime, parse_date
+        from django.utils import timezone
+        import datetime as _dt
+
+        def _to_dt(raw):
+            if not raw:
+                return None
+            dt = parse_datetime(raw)
+            if dt:
+                return dt
+            d = parse_date(raw)
+            if d:
+                return timezone.make_aware(_dt.datetime.combine(d, _dt.time.min))
+            return None
+
+        start = _to_dt(request.query_params.get("start")) or timezone.now().replace(hour=0, minute=0, second=0)
+        end   = _to_dt(request.query_params.get("end"))   or (start + timezone.timedelta(days=30))
+
+        qs = self.get_queryset().filter(
+            start_datetime__lt=end,
+            end_datetime__gt=start,
+        ).exclude(status="cancelled")
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+class OperationBookingViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for operation-room bookings.
+
+    GET    /crm/operation-bookings/           — list
+    POST   /crm/operation-bookings/           — create
+    PATCH  /crm/operation-bookings/{id}/      — partial update
+    DELETE /crm/operation-bookings/{id}/      — delete
+    GET    /crm/operation-bookings/calendar/  — bookings in a date range
+    """
+
+    queryset = OperationBooking.objects.select_related(
+        "room", "patient", "donor_patient", "booked_by"
+    ).prefetch_related("staff_assignments__employee").all()
+
+    serializer_class   = OperationBookingSerializer
+    permission_classes = [CrmPermission]          # reuse existing permission class
+    filter_backends    = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields   = ["room", "patient", "status", "with_donor"]
+    search_fields      = [
+        "patient__first_name", "patient__last_name",
+        "donor_patient__first_name", "donor_patient__last_name",
+        "room__name", "operation_type",
+    ]
+    ordering_fields    = ["start_datetime", "end_datetime", "status"]
+
+    def perform_create(self, serializer):
+        booking = serializer.save(booked_by=self.request.user)
+        self._conflict = booking.has_conflict()
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        data    = dict(serializer.data)
+        if getattr(self, "_conflict", False):
+            data["conflict_warning"] = (
+                "Cette salle d'opération a déjà une réservation sur ce créneau."
+            )
+        return Response(data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=False, methods=["get"], url_path="calendar")
+    def calendar(self, request):
+        """Return operation bookings in a date range. Query params: start, end."""
+        from django.utils.dateparse import parse_datetime, parse_date
+        from django.utils import timezone
+        import datetime as _dt
+
+        def _to_dt(raw):
+            if not raw:
+                return None
+            dt = parse_datetime(raw)
+            if dt:
+                return dt
+            d = parse_date(raw)
+            if d:
+                return timezone.make_aware(_dt.datetime.combine(d, _dt.time.min))
+            return None
+
+        start = _to_dt(request.query_params.get("start")) or timezone.now().replace(
+            hour=0, minute=0, second=0
+        )
+        end = _to_dt(request.query_params.get("end")) or (
+            start + _dt.timedelta(days=7)
+        )
+
+        qs = (
+            self.get_queryset()
+            .filter(start_datetime__lt=end, end_datetime__gt=start)
+            .exclude(status="cancelled")
+        )
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+    
+    
 class TreatmentSessionViewSet(viewsets.ModelViewSet):
     """
     ViewSet for TreatmentSession CRUD operations.
@@ -357,7 +540,7 @@ class TreatmentSessionViewSet(viewsets.ModelViewSet):
       GET /api/crm/treatment-sessions/available-slots/?machine=LINAC-1&date=2026-08-05
       Returns the next 5 free 1-hour slots for that machine on that date.
 
-    Permissions: CrmPermission (admin, doctor, secretary, radiotherapist)
+    Permissions: CrmPermission (admin, doctor, secretary)
     Filters: status, patient, treatment_plan, machine, room
     Search: notes, machine, room, patient names, treatment plan name
     Ordering: scheduled_datetime, session_number, created_at
@@ -989,7 +1172,7 @@ class TicketCommentViewSet(viewsets.ModelViewSet):
     """
     
     serializer_class = TicketCommentSerializer
-    permission_classes = [TicketPermission]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         """
@@ -1085,6 +1268,21 @@ def _portal_required(func):
 # ─── 1. Authentification ──────────────────────────────────────────────────────
 
 class PortalLoginView(APIView):
+    """
+    POST /api/portal/auth/login/ — AllowAny
+
+    Two-step flow:
+      Step 1 — password left blank:
+        · Verify last_name + cin + medical_record_number identify a patient.
+        · Generate a random 8-character one-time password, hash + save it,
+          and email it to the patient's address (patient.email).
+        · Return HTTP 200 {"detail": "…"} — no session cookie yet.
+
+      Step 2 — password provided:
+        · Same identity check.
+        · Verify the password matches the stored hash.
+        · Issue a 30-minute HttpOnly session cookie and return patient data.
+    """
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -1096,7 +1294,7 @@ class PortalLoginView(APIView):
         medical_record_number = ser.validated_data["medical_record_number"].strip()
         password = ser.validated_data.get("password", "").strip()
 
-        # 1. Vérifier que le patient existe
+        # ── Identify the patient ──────────────────────────────────────────────
         try:
             patient = Patient.objects.get(
                 last_name__iexact=last_name,
@@ -1109,15 +1307,24 @@ class PortalLoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        # 2. Récupérer ou créer le compte portail
+        # Determine the email to use: prefer patient.email, fall back to
+        # a non-deliverable placeholder so account creation never fails.
+        patient_email = patient.email.strip() if patient.email else ""
+
+        # Ensure a portal account exists
         account, created = PatientPortalAccount.objects.get_or_create(
             patient=patient,
             defaults={
-                "email": patient.email or f"portal-{patient.id}@patient.local",
+                "email": patient_email or f"portal-{patient.id}@patient.local",
                 "password_hash": "",
                 "is_active": True,
             },
         )
+
+        # Sync email if the patient record was updated after account creation
+        if not created and patient_email and account.email != patient_email:
+            account.email = patient_email
+            account.save(update_fields=["email"])
 
         if account.is_locked:
             return Response(
@@ -1127,68 +1334,78 @@ class PortalLoginView(APIView):
 
         if not account.is_active:
             return Response(
-                {"detail": "Compte portail désactivé."},
+                {"detail": "Compte portail désactivé. Contactez l'administration."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # 3. Cas 1 — password fourni → on vérifie
-        if password:
-            if not account.check_password(password):
-                account.record_failed_login()
-                return Response(
-                    {"detail": "Mot de passe incorrect."},
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-            # Password correct → connecter
-            return self._create_session(account, request)
+        # ── Step 1: no password → generate OTP and send by email ─────────────
+        if not password:
+            # Build a readable 8-char OTP (letters + digits, no ambiguous chars)
+            alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+            otp = "".join(secrets.choice(alphabet) for _ in range(8))
+            account.set_password(otp)
+            account.save(update_fields=["password_hash"])
 
-        # 4. Cas 2 — pas de password → envoyer par email si on a une vraie adresse
-        real_email = patient.email
-        if not real_email:
+            email_dest = account.email
+            has_real_email = "@patient.local" not in email_dest
+
+            if has_real_email:
+                try:
+                    send_mail(
+                        subject="Votre mot de passe temporaire — Espace Patient",
+                        message=(
+                            f"Bonjour {patient.first_name},\n\n"
+                            f"Voici votre mot de passe temporaire pour accéder à votre espace patient :\n\n"
+                            f"    {otp}\n\n"
+                            f"Ce mot de passe est valable pour une connexion. "
+                            f"Vous pourrez le modifier une fois connecté.\n\n"
+                            f"Si vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail.\n\n"
+                            f"— Centre de Radiothérapie"
+                        ),
+                        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@clinic.local"),
+                        recipient_list=[email_dest],
+                        fail_silently=True,
+                    )
+                    return Response(
+                        {"detail": f"Un mot de passe temporaire a été envoyé à l'adresse e-mail associée à votre dossier."},
+                        status=status.HTTP_200_OK,
+                    )
+                except Exception:
+                    pass  # fall through to shell display
+
+            # No real email on file — return the OTP in the response body so
+            # the admin / shell can relay it manually (dev / no-email setup).
             return Response(
-                {"detail": "Aucune adresse email associée à ce dossier. Contactez le secrétariat."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "detail": "Aucun email valide trouvé pour ce dossier. Contactez l'accueil pour obtenir votre mot de passe.",
+                    # Only included in non-production or when no email is configured:
+                    "_otp_shell": otp if not has_real_email else None,
+                },
+                status=status.HTTP_200_OK,
             )
 
-        # Générer un nouveau mot de passe temporaire
-        temp_password = secrets.token_urlsafe(10)  # ex: "aB3xK9mP2q"
-        account.set_password(temp_password)
-        account.email = real_email  # synchroniser l'email si besoin
-        account.save(update_fields=["password_hash", "email"])
+        # ── Step 2: password provided → verify and issue session ──────────────
+        if not account.check_password(password):
+            account.record_failed_login()
+            return Response(
+                {"detail": "Mot de passe incorrect."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
-        send_mail(
-            subject="Votre accès à l'Espace Patient",
-            message=(
-                f"Bonjour {patient.first_name} {patient.last_name},\n\n"
-                f"Votre mot de passe temporaire pour l'Espace Patient est :\n\n"
-                f"    {temp_password}\n\n"
-                f"Connectez-vous avec votre nom de famille, CIN, numéro de dossier et ce mot de passe.\n"
-                f"Vous pourrez le changer depuis votre profil.\n\n"
-                f"Ce message a été généré automatiquement."
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[real_email],
-            fail_silently=False,
-        )
-
-        return Response(
-            {"detail": "Un mot de passe temporaire a été envoyé à votre adresse email."},
-            status=status.HTTP_200_OK,
-        )
-
-    def _create_session(self, account, request):
         account.record_successful_login()
-        session = PatientPortalSession.create_for(
-            account,
-            ip=request.META.get("REMOTE_ADDR"),
-            ua=request.META.get("HTTP_USER_AGENT", ""),
+        ip = request.META.get("REMOTE_ADDR")
+        ua = request.META.get("HTTP_USER_AGENT", "")
+        session = PatientPortalSession.create_for(account, ip=ip, ua=ua)
+
+        response = Response(
+            {
+                "patient_id": account.patient.id,
+                "patient_name": f"{account.patient.first_name} {account.patient.last_name}",
+                "mrn": account.patient.medical_record_number,
+                "email": account.email,
+            }
         )
-        response = Response({
-            "patient_id": account.patient.id,
-            "patient_name": f"{account.patient.first_name} {account.patient.last_name}",
-            "mrn": account.patient.medical_record_number,
-            "email": account.email,
-        })
+        # HttpOnly session cookie — 30 minutes (matches session expiry)
         response.set_cookie(
             PORTAL_SESSION_COOKIE,
             session.token,
@@ -1514,7 +1731,7 @@ class StaffReplyToPatientView(APIView):
     POST /api/crm/portal/staff-reply/
     Réservée au staff authentifié (agent, médecin, secrétaire).
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         ser = StaffReplySerializer(data=request.data)
@@ -1610,14 +1827,174 @@ class PortalProfileView(APIView):
         })
 
 
-# ─── 8. Création compte portail (Staff seulement) ────────────────────────────
+# ─── 8. Factures portail patient ─────────────────────────────────────────────
+
+class PortalInvoiceListView(APIView):
+    """GET /api/portal/invoices/ — liste des factures du patient connecté"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        patient = request.portal_patient
+        try:
+            from apps.accounting.models import Invoice
+            invoices = (
+                Invoice.objects
+                .filter(patient=patient)
+                .prefetch_related("line_items", "payments")
+                .exclude(status="draft")
+                .order_by("-issue_date", "-created_at")
+            )
+            data = []
+            for inv in invoices:
+                data.append({
+                    "id": inv.id,
+                    "invoice_number": inv.invoice_number,
+                    "issue_date": str(inv.issue_date),
+                    "due_date": str(inv.due_date) if inv.due_date else None,
+                    "status": inv.status,
+                    "subtotal": str(inv.subtotal),
+                    "tax_amount": str(inv.tax_amount),
+                    "total_amount": str(inv.total_amount),
+                    "paid_amount": str(inv.paid_amount),
+                    "balance_due": str(inv.balance_due),
+                    "days_overdue": inv.days_overdue,
+                    "notes": inv.notes,
+                    "line_items": [
+                        {
+                            "description": li.description,
+                            "quantity": str(li.quantity),
+                            "unit_price": str(li.unit_price),
+                            "tax_rate": str(li.tax_rate),
+                            "line_total": str(li.line_total),
+                        }
+                        for li in inv.line_items.all()
+                    ],
+                })
+            return Response(data)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=500)
+
+
+class PortalInvoicePdfView(APIView):
+    """GET /api/portal/invoices/<pk>/pdf/ — génère et renvoie le PDF de la facture"""
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request, pk):
+        patient = request.portal_patient
+        try:
+            from apps.accounting.models import Invoice
+            inv = Invoice.objects.prefetch_related("line_items", "payments").get(
+                pk=pk, patient=patient
+            )
+        except Exception:
+            return Response({"detail": "Facture introuvable."}, status=404)
+
+        # Build a plain-text / HTML fallback if reportlab/weasyprint isn't installed
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.units import cm
+            from reportlab.pdfgen import canvas as rl_canvas
+            import io
+
+            buf = io.BytesIO()
+            c = rl_canvas.Canvas(buf, pagesize=A4)
+            w, h = A4
+
+            # Header
+            c.setFont("Helvetica-Bold", 18)
+            c.drawString(2 * cm, h - 2 * cm, "FACTURE")
+            c.setFont("Helvetica", 10)
+            c.drawString(2 * cm, h - 3 * cm, f"N° {inv.invoice_number}")
+            c.drawString(2 * cm, h - 3.6 * cm, f"Date : {inv.issue_date}")
+            if inv.due_date:
+                c.drawString(2 * cm, h - 4.2 * cm, f"Échéance : {inv.due_date}")
+
+            # Patient
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(2 * cm, h - 5.5 * cm, "Patient")
+            c.setFont("Helvetica", 10)
+            c.drawString(2 * cm, h - 6.1 * cm,
+                         f"{inv.patient.first_name} {inv.patient.last_name}")
+            c.drawString(2 * cm, h - 6.7 * cm,
+                         f"Dossier : {inv.patient.medical_record_number}")
+
+            # Line items header
+            y = h - 8.5 * cm
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(2 * cm, y, "Description")
+            c.drawString(11 * cm, y, "Qté")
+            c.drawString(13 * cm, y, "P.U.")
+            c.drawString(16 * cm, y, "Total")
+            y -= 0.4 * cm
+            c.line(2 * cm, y, 19 * cm, y)
+            y -= 0.6 * cm
+
+            c.setFont("Helvetica", 9)
+            for li in inv.line_items.all():
+                c.drawString(2 * cm, y, li.description[:55])
+                c.drawRightString(12.5 * cm, y, str(li.quantity))
+                c.drawRightString(15.5 * cm, y, f"{li.unit_price} TND")
+                c.drawRightString(19 * cm, y, f"{li.line_total} TND")
+                y -= 0.55 * cm
+                if y < 4 * cm:
+                    c.showPage()
+                    y = h - 2 * cm
+
+            # Totals
+            y -= 0.3 * cm
+            c.line(12 * cm, y, 19 * cm, y)
+            y -= 0.6 * cm
+            c.setFont("Helvetica", 10)
+            c.drawString(12 * cm, y, "Sous-total HT :")
+            c.drawRightString(19 * cm, y, f"{inv.subtotal} TND")
+            y -= 0.55 * cm
+            c.drawString(12 * cm, y, "TVA :")
+            c.drawRightString(19 * cm, y, f"{inv.tax_amount} TND")
+            y -= 0.55 * cm
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(12 * cm, y, "Total TTC :")
+            c.drawRightString(19 * cm, y, f"{inv.total_amount} TND")
+            y -= 0.55 * cm
+            c.setFont("Helvetica", 10)
+            c.drawString(12 * cm, y, "Montant payé :")
+            c.drawRightString(19 * cm, y, f"{inv.paid_amount} TND")
+            y -= 0.55 * cm
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(12 * cm, y, "Solde dû :")
+            c.drawRightString(19 * cm, y, f"{inv.balance_due} TND")
+
+            # Status badge
+            y -= 1.2 * cm
+            status_labels = {"issued": "EN ATTENTE", "paid": "PAYÉE", "cancelled": "ANNULÉE"}
+            c.drawString(2 * cm, y, f"Statut : {status_labels.get(inv.status, inv.status.upper())}")
+
+            c.save()
+            buf.seek(0)
+            from django.http import HttpResponse
+            response = HttpResponse(buf.read(), content_type="application/pdf")
+            response["Content-Disposition"] = (
+                f'attachment; filename="facture-{inv.invoice_number}.pdf"'
+            )
+            return response
+
+        except ImportError:
+            # reportlab not installed — return JSON so the frontend can render it
+            return Response({
+                "detail": "PDF generation not available on this server.",
+                "invoice_number": inv.invoice_number,
+            }, status=501)
+
+
+# ─── 9. Création compte portail (Staff seulement) ────────────────────────────
 
 class PortalRegisterView(APIView):
     """
     POST /api/crm/portal/register/
     Réservé au staff authentifié (secrétaire/admin) pour créer un compte portail.
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         ser = PortalRegisterSerializer(data=request.data)
@@ -1641,7 +2018,7 @@ class SmartSuggestView(APIView):
     POST /api/crm/appointments/smart-suggest/
     Retourne 3 créneaux optimaux scorés.
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from .serializers import SmartSuggestRequestSerializer
@@ -1693,7 +2070,7 @@ class SmartBookView(APIView):
     POST /api/crm/appointments/smart-book/
     Crée le RDV à partir d'un créneau sélectionné.
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from .serializers import SmartBookRequestSerializer
@@ -1774,7 +2151,7 @@ class AppointmentCancelView(APIView):
     POST /api/crm/appointments/<pk>/cancel/
     Annule un RDV et propose le créneau à la liste d'attente.
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         notified = handle_cancellation(pk)
@@ -1792,7 +2169,7 @@ class DoctorAvailabilityView(APIView):
     GET  /api/crm/doctors/<doctor_id>/availability/
     POST /api/crm/doctors/<doctor_id>/availability/
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, doctor_id):
         from .serializers import DoctorAvailabilitySerializer
@@ -1813,7 +2190,7 @@ class DoctorAvailabilityDetailView(APIView):
     PATCH  /api/crm/doctors/availability/<pk>/
     DELETE /api/crm/doctors/availability/<pk>/
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def _get(self, pk):
         try:
@@ -1845,7 +2222,7 @@ class PatientPreferencesView(APIView):
     GET /api/crm/patients/<patient_id>/scheduling-preferences/
     PUT /api/crm/patients/<patient_id>/scheduling-preferences/
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, patient_id):
         from .serializers import PatientPreferencesSerializer
@@ -1869,7 +2246,7 @@ class WaitingListView(APIView):
     GET  /api/crm/waiting-list/
     POST /api/crm/waiting-list/
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from .serializers import WaitingListSerializer
@@ -1930,7 +2307,7 @@ class AppointmentExtensionView(APIView):
     GET   /api/crm/appointments/<pk>/extension/
     PATCH /api/crm/appointments/<pk>/extension/
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
         from .serializers import AppointmentExtensionSerializer
@@ -1983,7 +2360,7 @@ class TreatmentProtocolViewSet(viewsets.ModelViewSet):
     POST   /api/crm/protocols/{id}/clone/   → nouvelle version
     GET    /api/crm/protocols/{id}/versions/ → toutes les versions de la lignée
     """
-    permission_classes = [CrmPermission]
+    permission_classes = [IsAuthenticated]
     queryset = TreatmentProtocol.objects.select_related(
         "created_by", "approved_by", "parent"
     ).prefetch_related("changelog__performed_by")
@@ -2215,7 +2592,7 @@ class DoseDeviationViewSet(viewsets.ModelViewSet):
     PATCH  /api/crm/dose-deviations/{id}/           → mettre à jour notes
     POST   /api/crm/dose-deviations/{id}/review/    → marquer comme relu
     """
-    permission_classes = [CrmPermission]
+    permission_classes  = [IsAuthenticated]
     serializer_class    = DoseDeviationSerializer
     queryset = DoseDeviation.objects.select_related(
         "session__patient", "protocol", "reviewed_by"
@@ -2261,3 +2638,375 @@ class DoseDeviationViewSet(viewsets.ModelViewSet):
         deviation.notes = request.data.get("notes", deviation.notes)
         deviation.save(update_fields=["reviewed", "reviewed_by", "reviewed_at", "notes"])
         return Response(DoseDeviationSerializer(deviation).data)
+
+# ── Vue Staff : liste des médecins pour le portail ────────────────────────────
+
+class PortalListDoctorsView(APIView):
+    """
+    GET /api/crm/portal/doctors/
+    Retourne la liste des médecins actifs avec disponibilité.
+    Accessible au staff authentifié (pour l'interface d'admin / secrétariat).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        doctors = (
+            User.objects
+            .filter(is_active=True, profile__role="doctor")
+            .select_related("profile")
+        )
+        data = [
+            {
+                "id": d.id,
+                "first_name": d.first_name,
+                "last_name": d.last_name,
+                "full_name": f"{d.first_name} {d.last_name}".strip() or d.username,
+                "department": getattr(getattr(d, "profile", None), "department", ""),
+                "has_availability": d.availabilities.filter(is_active=True).exists()
+                    if hasattr(d, "availabilities") else False,
+            }
+            for d in doctors
+        ]
+        return Response(data)
+
+
+# ── Vue Staff : liste des patients avec compte portail ────────────────────────
+
+class PortalPatientListView(APIView):
+    """
+    GET /api/crm/portal/patients/
+    Liste des patients ayant un compte portail actif, avec
+    le nombre de messages non lus (patient → staff).
+    Réservée au staff authentifié.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        accounts = (
+            PatientPortalAccount.objects
+            .filter(is_active=True)
+            .select_related("patient")
+            .prefetch_related("patient__portal_messages")
+        )
+        data = []
+        for acc in accounts:
+            patient = acc.patient
+            unread = PortalMessage.objects.filter(
+                patient=patient,
+                direction=PortalMessage.Direction.PATIENT_TO_STAFF,
+                is_read=False,
+            ).count()
+            last_msg = (
+                PortalMessage.objects
+                .filter(patient=patient)
+                .order_by("-created_at")
+                .first()
+            )
+            data.append({
+                "patient_id": patient.id,
+                "patient_name": f"{patient.first_name} {patient.last_name}".strip()
+                    or str(patient),
+                "mrn": getattr(patient, "medical_record_number", str(patient.id)),
+                "unread_count": unread,
+                "last_message_preview": (last_msg.content[:80] if last_msg else None),
+                "last_message_at": (last_msg.created_at.isoformat() if last_msg else None),
+            })
+        # Trier : messages non lus d'abord, puis par date du dernier message
+        data.sort(key=lambda x: (-x["unread_count"], x["last_message_at"] or ""))
+        return Response(data)
+
+
+# ── Vue Staff : fil de messages avec un patient ───────────────────────────────
+
+class PortalStaffThreadView(APIView):
+    """
+    GET  /api/crm/portal/patients/<patient_id>/messages/
+         Récupère tous les messages du fil patient ↔ staff.
+         Les messages non lus (patient → staff) sont marqués comme lus.
+    POST /api/crm/portal/patients/<patient_id>/messages/
+         Envoie une réponse du staff vers le patient.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_patient(self, patient_id):
+        try:
+            return Patient.objects.get(pk=patient_id)
+        except Patient.DoesNotExist:
+            return None
+
+    def get(self, request, patient_id):
+        patient = self._get_patient(patient_id)
+        if not patient:
+            return Response({"detail": "Patient introuvable."}, status=404)
+
+        messages = (
+            PortalMessage.objects
+            .filter(patient=patient)
+            .select_related("staff_author")
+            .order_by("created_at")
+        )
+        # Marquer comme lus les messages patient → staff non lus
+        PortalMessage.objects.filter(
+            patient=patient,
+            direction=PortalMessage.Direction.PATIENT_TO_STAFF,
+            is_read=False,
+        ).update(is_read=True, read_at=timezone.now())
+
+        return Response(PortalMessageSerializer(messages, many=True).data)
+
+    def post(self, request, patient_id):
+        patient = self._get_patient(patient_id)
+        if not patient:
+            return Response({"detail": "Patient introuvable."}, status=404)
+
+        content = request.data.get("content", "").strip()
+        if not content:
+            return Response({"detail": "Le contenu du message est requis."}, status=400)
+
+        msg = PortalMessage.objects.create(
+            patient=patient,
+            direction=PortalMessage.Direction.STAFF_TO_PATIENT,
+            staff_author=request.user,
+            subject=request.data.get("subject", ""),
+            content=content,
+        )
+        return Response(PortalMessageSerializer(msg).data, status=201)
+
+
+# ── Portail Patient : liste des médecins disponibles ──────────────────────────
+
+class PortalListDoctorsView(APIView):
+    """
+    GET /api/crm/portal/doctors/
+    Liste des médecins actifs ayant au moins une disponibilité active.
+    Accessible par session portail patient.
+    """
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        doctors = (
+            User.objects
+            .filter(is_active=True, profile__role="doctor")
+            .select_related("profile")
+            .prefetch_related("availabilities")
+        )
+
+        data = []
+        for d in doctors:
+            active_avail = [a for a in d.availabilities.all() if a.is_active]
+            data.append({
+                "id": d.id,
+                "first_name": d.first_name,
+                "last_name": d.last_name,
+                "full_name": f"Dr. {d.first_name} {d.last_name}".strip(),
+                "specialty": getattr(getattr(d, "profile", None), "department", ""),
+                "has_availability": len(active_avail) > 0,
+            })
+
+        # Médecins avec disponibilités d'abord
+        data.sort(key=lambda x: (not x["has_availability"], x["full_name"]))
+        return Response(data)
+
+
+# ── Portail Patient : créneaux libres pour un médecin ─────────────────────────
+
+class PortalDoctorSlotsView(APIView):
+    """
+    GET /api/crm/portal/doctors/<doctor_id>/slots/?type=<appointment_type>
+    Retourne les créneaux libres sur les 14 prochains jours (J+2 → J+16).
+    Les créneaux respectent les disponibilités hebdomadaires du médecin
+    et excluent les créneaux déjà réservés.
+    """
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def get(self, request, doctor_id):
+        from datetime import date, datetime, timedelta
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        try:
+            doctor = User.objects.get(pk=doctor_id, is_active=True)
+        except User.DoesNotExist:
+            return Response({"detail": "Médecin introuvable."}, status=404)
+
+        appointment_type = request.query_params.get("type", "simple")
+        duration = {
+                "simple": 15,
+                "complex": 30,
+                "followup": 45,
+                "urgency": 30,
+                "operation": 60,
+            }.get(appointment_type, 15)
+
+        # Fenêtre J+2 → J+16
+        today = timezone.now().date()
+        start_date = today + timedelta(days=2)
+        end_date   = today + timedelta(days=16)
+
+        # Disponibilités hebdomadaires du médecin
+        availabilities = DoctorAvailability.objects.filter(
+            doctor_id=doctor_id, is_active=True
+        )
+
+        slots = []
+        check = start_date
+        while check <= end_date:
+            day_of_week = check.weekday()  # 0=Mon … 6=Sun
+            for avail in availabilities:
+                if avail.day_of_week != day_of_week:
+                    continue
+                # Itérer par tranches de 15 min dans la plage
+                avail_start = datetime.combine(check, avail.start_time)
+                avail_end   = datetime.combine(check, avail.end_time)
+                slot_dt     = timezone.make_aware(avail_start)
+                slot_end_av = timezone.make_aware(avail_end)
+
+                while slot_dt + timedelta(minutes=duration) <= slot_end_av:
+                    if _is_slot_free(doctor_id, slot_dt, duration):
+                        local = slot_dt.astimezone(timezone.get_current_timezone())
+                        slots.append({
+                            "datetime":         slot_dt.isoformat(),
+                            "date":             local.strftime("%Y-%m-%d"),
+                            "time":             local.strftime("%H:%M"),
+                            "duration_minutes": duration,
+                        })
+                    slot_dt += timedelta(minutes=15)
+
+            check += timedelta(days=1)
+
+        doctor_name = f"Dr. {doctor.first_name} {doctor.last_name}".strip()
+        return Response({
+            "slots":            slots,
+            "doctor_id":        doctor_id,
+            "doctor_name":      doctor_name,
+            "appointment_type": appointment_type,
+            "duration_minutes": duration,
+        })
+
+
+# ── Portail Patient : réserver un créneau ────────────────────────────────────
+
+class PortalBookAppointmentView(APIView):
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def post(self, request):
+        patient = request.portal_patient
+
+        doctor_id = request.data.get("doctor_id")
+        slot_datetime_str = request.data.get("slot_datetime")
+        appointment_type = request.data.get("appointment_type", "simple")
+        reason = request.data.get("reason", "")
+        duration_minutes = request.data.get("duration_minutes")  # optionnel
+
+        if not doctor_id or not slot_datetime_str:
+            return Response(
+                {"detail": "doctor_id et slot_datetime sont requis."},
+                status=400,
+            )
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            User.objects.get(pk=doctor_id, is_active=True)
+        except User.DoesNotExist:
+            return Response({"detail": "Médecin introuvable."}, status=404)
+
+        # ── Parsing robuste de la date avec Django ──────────────────────
+        from django.utils.dateparse import parse_datetime
+
+        slot_dt = parse_datetime(slot_datetime_str)
+        if slot_dt is None:
+            return Response(
+                {"detail": f"Format de date invalide : {slot_datetime_str}"},
+                status=400,
+            )
+        if timezone.is_naive(slot_dt):
+            slot_dt = timezone.make_aware(slot_dt)
+
+        # Déterminer la durée
+        if appointment_type == "operation":
+            # Si une durée est fournie, l'utiliser ; sinon, fallback 60 min
+            if duration_minutes is None:
+                duration_minutes = 60
+            # S'assurer que la durée est dans une plage raisonnable
+            try:
+                duration_minutes = int(duration_minutes)
+                if duration_minutes < 15:
+                    duration_minutes = 15
+                elif duration_minutes > 480:  # max 8h
+                    duration_minutes = 480
+            except (TypeError, ValueError):
+                duration_minutes = 60
+        else:
+            duration_minutes = None   # le back-end utilisera la valeur par défaut du type
+
+        # Vérification atomique de disponibilité avec la durée calculée
+        effective_duration = duration_minutes or 15
+        if not _is_slot_free(doctor_id, slot_dt, effective_duration):
+            return Response(
+                {"detail": "Ce créneau vient d'être pris. Veuillez choisir un autre."},
+                status=409,
+            )
+
+        apt = book_slot(
+            patient=patient,
+            doctor_id=doctor_id,
+            slot_dt=slot_dt,
+            appointment_type=appointment_type,
+            priority=1 if appointment_type == "urgency" else 2,
+            reason=reason,
+            duration_minutes=duration_minutes,   # sera utilisé si non None
+        )
+
+        return Response(
+            {
+                "appointment_id":   apt.id,
+                "appointment_date": apt.appointment_date.isoformat(),
+                "status":           apt.status,
+                "duration_minutes": effective_duration,
+                "confirmation_token": apt.extension.confirmation_token,
+                "message": "Rendez-vous réservé. Vous recevrez une confirmation.",
+            },
+            status=201,
+        )
+        
+# ── Portail Patient : annuler son propre RDV ──────────────────────────────────
+
+class PortalCancelAppointmentView(APIView):
+    """
+    POST /api/crm/portal/appointments/<pk>/cancel/
+    Annule un RDV appartenant au patient connecté.
+    Seuls les statuts "scheduled" et "confirmed" sont annulables.
+    """
+    permission_classes = [AllowAny]
+
+    @_portal_required
+    def post(self, request, pk):
+        patient = request.portal_patient
+
+        try:
+            apt = Appointment.objects.get(pk=pk, patient=patient)
+        except Appointment.DoesNotExist:
+            return Response({"detail": "Rendez-vous introuvable."}, status=404)
+
+        if apt.status not in ("scheduled", "confirmed"):
+            return Response(
+                {"detail": f"Impossible d'annuler un rendez-vous au statut « {apt.status} »."},
+                status=400,
+            )
+
+        apt.status = "cancelled"
+        apt.save(update_fields=["status"])
+
+        return Response({
+            "detail":         "Rendez-vous annulé.",
+            "appointment_id": apt.id,
+        })

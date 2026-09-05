@@ -47,7 +47,6 @@ import {
   Cell,
   BarChart,
   Bar,
-  Legend,
 } from "recharts";
 import { fetchDashboardSummary } from "@/lib/dashboard-api";
 import { fetchInvoices, type InvoiceStatus } from "@/lib/invoices-api";
@@ -91,11 +90,27 @@ function initials(name: string) {
 }
 
 function DashboardPage() {
-  // Get current user for role-based dashboard
+  // ── Auth check first — all data queries wait for the user to resolve ──────
+  // This prevents dashboard sub-queries from firing before the JWT cookie is
+  // refreshed, which was causing 401s on /api/dashboard/summary/ at page load.
   const userQuery = useQuery({ queryKey: ["me"], queryFn: fetchCurrentUser });
-  const summaryQuery = useQuery({ queryKey: ["dashboard-summary"], queryFn: fetchDashboardSummary });
-  const invoicesQuery = useQuery({ queryKey: ["invoices"], queryFn: fetchInvoices });
-  const patientsQuery = useQuery({ queryKey: ["patients-all"], queryFn: fetchAllPatients });
+  const isAuthed = userQuery.isSuccess;
+
+  const summaryQuery = useQuery({
+    queryKey: ["dashboard-summary"],
+    queryFn: fetchDashboardSummary,
+    enabled: isAuthed,
+  });
+  const invoicesQuery = useQuery({
+    queryKey: ["invoices"],
+    queryFn: fetchInvoices,
+    enabled: isAuthed,
+  });
+  const patientsQuery = useQuery({
+    queryKey: ["patients-all"],
+    queryFn: fetchAllPatients,
+    enabled: isAuthed,
+  });
 
   const user = userQuery.data;
   const summary = summaryQuery.data;
@@ -105,7 +120,7 @@ function DashboardPage() {
   const role = user?.profile?.role ?? "unknown";
   const isAdmin = role === "admin";
   const isFinance = role === "accountant" || role === "admin";
-  const isMedical = role === "doctor" || role === "radiotherapist" || role === "admin";
+  const isMedical = role === "doctor" || role === "admin";
   const isSupport = role === "agent" || role === "support" || role === "admin";
   const isHR = role === "hr" || role === "admin";
 
@@ -113,7 +128,7 @@ function DashboardPage() {
   const overdueTotal = summary?.overdue_invoices_total ?? 0;
   const overdueDays = summary?.overdue_threshold_days ?? 0;
 
-  const isLoading = summaryQuery.isLoading || invoicesQuery.isLoading || patientsQuery.isLoading || userQuery.isLoading;
+  const isLoading = userQuery.isLoading || summaryQuery.isLoading || invoicesQuery.isLoading || patientsQuery.isLoading;
   const loadError = summaryQuery.error || invoicesQuery.error || patientsQuery.error;
 
   const monthlyRevenue = useMemo(() => {
@@ -358,20 +373,38 @@ function DashboardPage() {
             </>
           )}
 
-          {/* Fallback if no role-specific widgets */}
           {!isAdmin && !isFinance && !isMedical && !isSupport && !isHR && (
             <>
-              <StatCard label="Patients" value={summary.patients_count} icon={Users} color="blue" />
-              <StatCard label="Tickets" value={summary.tickets_count ?? 0} icon={Ticket} color="yellow" />
-              <StatCard label="Factures" value={summary.invoices_count ?? 0} icon={FileText} color="green" />
-              <StatCard label="Employés" value={summary.employees_count} icon={Briefcase} color="purple" />
+              <StatCard
+                label="Patients"
+                value={summary.patients_count}
+                icon={Users}
+                color="blue"
+              />
+              <StatCard
+                label="Tickets"
+                value={summary.tickets_count ?? 0}
+                icon={Ticket}
+                color="yellow"
+              />
+              <StatCard
+                label="Factures"
+                value={summary.invoices_count ?? 0}
+                icon={FileText}
+                color="green"
+              />
+              <StatCard
+                label="Employés"
+                value={summary.employees_count}
+                icon={Briefcase}
+                color="purple"
+              />
             </>
           )}
         </div>
 
         {/* Charts - Role specific */}
         <div className="grid gap-4 lg:grid-cols-2">
-          {/* Finance: Billing chart */}
           {isFinance && !isAdmin && (
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -411,7 +444,6 @@ function DashboardPage() {
             </Card>
           )}
 
-          {/* Support: Tickets by status */}
           {isSupport && !isAdmin && summary.tickets_by_status && (
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -439,7 +471,6 @@ function DashboardPage() {
             </Card>
           )}
 
-          {/* Medical: Clinical activity */}
           {isMedical && !isAdmin && (
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -492,7 +523,6 @@ function DashboardPage() {
             </Card>
           )}
 
-          {/* HR: Workforce presence */}
           {isHR && !isAdmin && (
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -547,7 +577,6 @@ function DashboardPage() {
             </Card>
           )}
 
-          {/* Admin: Show revenue chart + billing */}
           {isAdmin && (
             <>
               <Card className="lg:col-span-1">
@@ -569,8 +598,19 @@ function DashboardPage() {
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                        <XAxis dataKey="name" tickLine={false} axisLine={false} stroke="var(--muted-foreground)" fontSize={12} />
-                        <YAxis tickLine={false} axisLine={false} stroke="var(--muted-foreground)" fontSize={12} />
+                        <XAxis
+                          dataKey="name"
+                          tickLine={false}
+                          axisLine={false}
+                          stroke="var(--muted-foreground)"
+                          fontSize={12}
+                        />
+                        <YAxis
+                          tickLine={false}
+                          axisLine={false}
+                          stroke="var(--muted-foreground)"
+                          fontSize={12}
+                        />
                         <Tooltip
                           contentStyle={{
                             background: "var(--popover)",
@@ -579,7 +619,13 @@ function DashboardPage() {
                           }}
                           formatter={(value: number) => formatMoney(value)}
                         />
-                        <Area type="monotone" dataKey="value" stroke="var(--primary)" strokeWidth={2} fill="url(#fill)" />
+                        <Area
+                          type="monotone"
+                          dataKey="value"
+                          stroke="var(--primary)"
+                          strokeWidth={2}
+                          fill="url(#fill)"
+                        />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
@@ -619,7 +665,6 @@ function DashboardPage() {
             </>
           )}
 
-          {/* Fallback chart: show clinical if no role-specific */}
           {!isFinance && !isSupport && !isMedical && !isHR && !isAdmin && (
             <Card className="lg:col-span-2">
               <CardHeader>

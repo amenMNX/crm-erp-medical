@@ -14,6 +14,8 @@ from .views import (
     PublicTicketStatusView,
     PublicTicketSubmitView,
     RoomViewSet,
+    RoomBookingViewSet,
+    OperationBookingViewSet,
     TicketCommentViewSet,
     TicketViewSet,
     TreatmentPlanViewSet,
@@ -35,6 +37,14 @@ from .views import (
     StaffReplyToPatientView,
     PortalRatingView,
     PortalProfileView,
+    PortalInvoiceListView,
+    PortalInvoicePdfView,
+    PortalListDoctorsView,
+    PortalDoctorSlotsView,
+    PortalBookAppointmentView,
+    PortalCancelAppointmentView,
+    PortalPatientListView,
+    PortalStaffThreadView,
     PortalRegisterView,
     # ── US-APT-02 : Rendez-vous Intelligents ──
     SmartSuggestView,
@@ -64,8 +74,9 @@ router.register("treatment-sessions", TreatmentSessionViewSet, basename="treatme
 # Equipment
 router.register("machines", MachineViewSet, basename="machine")
 router.register("rooms", RoomViewSet, basename="room")
+router.register("room-bookings", RoomBookingViewSet, basename="room-booking")
 router.register("maintenance-logs", MaintenanceLogViewSet, basename="maintenance-log")
-
+router.register("operation-bookings", OperationBookingViewSet, basename="operation-booking")
 # US-TRT-05 — Protocoles de Traitement
 router.register("protocols", TreatmentProtocolViewSet, basename="protocol")
 router.register("dose-deviations", DoseDeviationViewSet, basename="dose-deviation")
@@ -94,6 +105,12 @@ urlpatterns = [
     path("portal/dashboard/",                     PortalDashboardView.as_view(),            name="portal-dashboard"),
     path("portal/medical-history/",               PortalMedicalHistoryView.as_view(),       name="portal-medical-history"),
     path("portal/appointments/",                  PortalAppointmentHistoryView.as_view(),   name="portal-appointments"),
+    path("portal/appointments/book/",             PortalBookAppointmentView.as_view(),      name="portal-book-appointment"),
+    path("portal/appointments/<int:pk>/cancel/",  PortalCancelAppointmentView.as_view(),    name="portal-cancel-appointment"),
+    path("portal/doctors/",                       PortalListDoctorsView.as_view(),          name="portal-list-doctors"),
+    path("portal/doctors/<int:doctor_id>/slots/", PortalDoctorSlotsView.as_view(),          name="portal-doctor-slots"),
+    path("portal/patients/",                      PortalPatientListView.as_view(),          name="portal-patient-list"),
+    path("portal/patients/<int:patient_id>/messages/", PortalStaffThreadView.as_view(),     name="portal-staff-thread"),
     path("portal/documents/",                     PortalDocumentListView.as_view(),         name="portal-documents"),
     path("portal/documents/<int:pk>/download/",   PortalDocumentDownloadView.as_view(),     name="portal-document-download"),
     path("portal/messages/",                      PortalMessageListView.as_view(),          name="portal-messages"),
@@ -102,6 +119,8 @@ urlpatterns = [
     path("portal/profile/",                       PortalProfileView.as_view(),              name="portal-profile"),
 
     # ── Portail Patient — Staff (IsAuthenticated) ─────────────────────────
+    path("portal/invoices/",                      PortalInvoiceListView.as_view(),          name="portal-invoices"),
+    path("portal/invoices/<int:pk>/pdf/",         PortalInvoicePdfView.as_view(),           name="portal-invoice-pdf"),
     path("portal/staff-reply/",                   StaffReplyToPatientView.as_view(),        name="portal-staff-reply"),
     path("portal/register/",                      PortalRegisterView.as_view(),             name="portal-register"),
 

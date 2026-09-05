@@ -90,10 +90,9 @@ function getApiBaseUrl(): string {
   }
 
   const hostname = window.location.hostname;
-  
+
   // If we're on ngrok, use relative path to avoid CORS issues
   if (hostname.includes('ngrok-free.app') || hostname.includes('ngrok.io')) {
-    console.log('🌐 Running on ngrok, using relative API path');
     return '/api';
   }
 
@@ -114,7 +113,7 @@ async function fetchWithCookies<T>(
   const baseUrl = getApiBaseUrl();
   const url = `${baseUrl}${route}`;
   const { method = "GET", body, headers = {} } = options;
-  
+
   const requestHeaders = new Headers(headers);
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
 
@@ -127,8 +126,6 @@ async function fetchWithCookies<T>(
   if (csrfToken) {
     requestHeaders.set("X-CSRFToken", csrfToken);
   }
-
-  console.log(`📡 ${method} ${url}`);
 
   const response = await fetch(url, {
     method,
@@ -155,11 +152,9 @@ async function fetchWithCookies<T>(
   }
 
   if (!response.ok) {
-    console.error(`❌ API Error ${response.status}:`, data);
     throw new ApiError(parseErrorMessage(data), response.status, data);
   }
 
-  console.log(`✅ ${method} ${url} successful`);
   return data as T;
 }
 
@@ -179,9 +174,20 @@ function getCsrfToken(): string | null {
 }
 
 async function refreshToken(): Promise<void> {
-  console.log('🔄 Refreshing token...');
   await fetchWithCookies("/accounts/refresh/", { method: "POST" });
-  console.log('✅ Token refreshed');
+}
+
+// Paths that are either auth endpoints themselves, or public portal endpoints
+// that must never trigger the 401 → refresh → redirect cycle.
+const AUTH_EXEMPT_PATHS = [
+  "/accounts/login/",
+  "/accounts/refresh/",
+  "/accounts/register/",
+  "/crm/portal/",   // all unauthenticated patient-portal endpoints
+];
+
+function isAuthExempt(path: string): boolean {
+  return AUTH_EXEMPT_PATHS.some((prefix) => path.startsWith(prefix));
 }
 
 export async function apiFetch<T>(
@@ -194,20 +200,13 @@ export async function apiFetch<T>(
     if (
       error instanceof ApiError &&
       error.status === 401 &&
-      path !== "/accounts/login/" &&
-      path !== "/accounts/refresh/" &&
-      path !== "/accounts/register/"
+      !isAuthExempt(path)
     ) {
-      console.log('🔄 Attempting token refresh due to 401...');
       try {
         await refreshToken();
-        console.log('🔄 Retrying original request after refresh...');
         return await fetchWithCookies<T>(path, options);
       } catch (refreshError) {
-        console.log('❌ Token refresh failed, redirecting to login...');
-        // Clear user data
         clearAuthTokens();
-        // Redirect to login page
         if (typeof window !== "undefined") {
           window.location.href = "/signin";
         }
@@ -233,20 +232,15 @@ export async function loginRequest(
     profile?: { role?: string };
   };
 }> {
-  console.log('🔐 Logging in...');
-  const result = await apiFetch("/accounts/login/", {
+  return apiFetch("/accounts/login/", {
     method: "POST",
     body: { username, password },
   });
-  console.log('✅ Login successful');
-  return result;
 }
 
 export async function logoutRequest(): Promise<void> {
-  console.log('🚪 Logging out...');
   await apiFetch("/accounts/logout/", { method: "POST" });
   clearAuthTokens();
-  console.log('✅ Logout successful');
 }
 
 /**

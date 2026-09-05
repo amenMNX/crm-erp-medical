@@ -28,7 +28,16 @@ class Machine(models.Model):
         choices=Status.choices,
         default=Status.ACTIVE,
     )
-    location = models.CharField(max_length=150, blank=True, help_text="Room / building")
+    # Physical room where this machine is installed.
+    # Only rooms with usage=stock or usage=medicalized should be selected.
+    room = models.ForeignKey(
+        "crm.Room",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="machines",
+        help_text="Salle / local où se trouve la machine",
+    )
+    location = models.CharField(max_length=150, blank=True, help_text="Complément d'adresse (étage, couloir…)")
 
     # ── Lifecycle & amortissement ─────────────────────────────────────────────
     purchase_date = models.DateField(blank=True, null=True)
@@ -184,21 +193,56 @@ Machine._recompute_reliability = _machine_recompute_reliability
 
 
 class Room(models.Model):
-    """A treatment or consultation room."""
+    """
+    A physical room / space in the clinic.
+
+    Usage labels (three categories):
+      medicalized         — chambre médicalisée : accueil post-opératoire, hospitalisation
+                           d'une nuit, etc.  Bookings + machine assignment allowed.
+      patient_appointment — salle de rendez-vous patient : consultation, radio,
+                           ophtalmologie, etc.  Bookings allowed, machines NOT stored here.
+      stock               — local technique / stockage de matériel.
+                           Machines are stored here; patient bookings NOT allowed.
+    """
 
     class Status(models.TextChoices):
-        ACTIVE = "active", "Active"
+        ACTIVE      = "active",      "Active"
         MAINTENANCE = "maintenance", "En maintenance"
-        CLOSED = "closed", "Fermée"
+        CLOSED      = "closed",      "Fermée"
 
-    name = models.CharField(max_length=100, unique=True)
-    location = models.CharField(max_length=150, blank=True, help_text="Building / floor / wing")
-    status = models.CharField(
+    class Usage(models.TextChoices):
+        MEDICALIZED         = "medicalized",         "Chambre médicalisée"
+        PATIENT_APPOINTMENT = "patient_appointment", "Salle de rendez-vous"
+        OPERATION_ROOM      = "operation_room",      "Salle d'opération"
+        STOCK               = "stock",               "Stock / Local technique"
+
+    name      = models.CharField(max_length=100, unique=True)
+    usage     = models.CharField(
+        max_length=30,
+        choices=Usage.choices,
+        default=Usage.PATIENT_APPOINTMENT,
+        help_text=(
+            "medicalized = chambre post-op/nuit ; "
+            "patient_appointment = consultation/radio/ophtalmo ; "
+            "stock = local matériel"
+        ),
+    )
+    # Specialty — relevant for patient_appointment rooms
+    specialty = models.CharField(
+        max_length=100, blank=True,
+        help_text="Ex : Radiologie, Ophtalmologie, Consultation générale",
+    )
+    location  = models.CharField(max_length=150, blank=True, help_text="Bâtiment / étage / aile")
+    capacity  = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Nombre maximum d'occupants (patient + accompagnants). Ignoré pour Stock.",
+    )
+    status    = models.CharField(
         max_length=20,
         choices=Status.choices,
         default=Status.ACTIVE,
     )
-    notes = models.TextField(blank=True)
+    notes     = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -207,7 +251,99 @@ class Room(models.Model):
         ordering = ["name"]
 
     def __str__(self):
-        return self.name
+        label = dict(self.Usage.choices).get(self.usage, self.usage)
+        return f"{self.name} [{label}]"
+
+    @property
+    def is_available(self):
+        """True when the room is active."""
+        return self.status == self.Status.ACTIVE
+
+    @property
+    def bookings_allowed(self):
+        """Patient bookings are only allowed in medicalized and patient_appointment rooms."""
+        return self.usage in (self.Usage.MEDICALIZED, self.Usage.PATIENT_APPOINTMENT , self.Usage.OPERATION_ROOM,)
+
+
+class RoomBooking(models.Model):
+    """
+    A time-slot reservation for a room.
+
+    occupants: total number of people present
+      1  → patient alone
+      2  → patient + 1 companion
+      3  → patient + 2 companions (capped at room.capacity)
+    """
+
+    class Status(models.TextChoices):
+        CONFIRMED = "confirmed", "Confirmée"
+        PENDING   = "pending",   "En attente"
+        CANCELLED = "cancelled", "Annulée"
+        COMPLETED = "completed", "Terminée"
+
+    room    = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="bookings")
+    patient = models.ForeignKey(
+        "crm.Patient", on_delete=models.CASCADE, related_name="room_bookings"
+    )
+    occupants        = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Nombre total d'occupants (patient + accompagnants)",
+    )
+    notes_companions = models.CharField(
+        max_length=255, blank=True,
+        help_text="Ex : épouse + infirmière, mère",
+    )
+
+    start_datetime = models.DateTimeField()
+    end_datetime   = models.DateTimeField()
+    status         = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.CONFIRMED
+    )
+    reason  = models.CharField(max_length=255, blank=True)
+    notes   = models.TextField(blank=True)
+
+    booked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="room_bookings_created",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering            = ["start_datetime"]
+        verbose_name        = "Réservation de salle"
+        verbose_name_plural = "Réservations de salles"
+
+    def __str__(self):
+        return (
+            f"{self.room.name} — {self.patient} "
+            f"[{self.start_datetime:%d/%m/%Y %H:%M}–{self.end_datetime:%H:%M}]"
+        )
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.end_datetime and self.start_datetime and self.end_datetime <= self.start_datetime:
+            raise ValidationError("La fin doit être postérieure au début.")
+        if self.room_id and self.occupants and self.occupants > self.room.capacity:
+            raise ValidationError(
+                f"Le nombre d'occupants ({self.occupants}) dépasse la capacité "
+                f"de la salle ({self.room.capacity})."
+            )
+
+    def has_conflict(self):
+        """True if another confirmed/pending booking overlaps this one in the same room."""
+        qs = RoomBooking.objects.filter(
+            room=self.room,
+            status__in=[self.Status.CONFIRMED, self.Status.PENDING],
+            start_datetime__lt=self.end_datetime,
+            end_datetime__gt=self.start_datetime,
+        )
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+        return qs.exists()
 
 
 def _generate_mrn() -> str:
@@ -239,8 +375,164 @@ def _generate_mrn() -> str:
         candidate = f"MRN-{year}-{seq:04d}"
     return candidate
 
+# ─── NEW MODELS (paste after RoomBooking) ────────────────────────────────────
+
+class OperationBooking(models.Model):
+    """
+    A reservation of an operation_room for a surgical procedure.
+
+    Differences from RoomBooking:
+      - Room must have usage = operation_room.
+      - Optional second patient when with_donor=True (e.g. organ donation).
+      - Staff assignments via OperationStaff (doctors + nurses).
+    """
+
+    class Status(models.TextChoices):
+        CONFIRMED = "confirmed", "Confirmée"
+        PENDING   = "pending",   "En attente"
+        CANCELLED = "cancelled", "Annulée"
+        COMPLETED = "completed", "Terminée"
+
+    room = models.ForeignKey(
+        "crm.Room",
+        on_delete=models.CASCADE,
+        related_name="operation_bookings",
+        help_text="Doit être une salle d'opération (usage=operation_room).",
+    )
+
+    # Primary patient (always required)
+    patient = models.ForeignKey(
+        "crm.Patient",
+        on_delete=models.CASCADE,
+        related_name="operation_bookings",
+    )
+
+    # Donor patient — only when with_donor is True
+    with_donor = models.BooleanField(
+        default=False,
+        help_text="Cocher si l'opération implique un donneur.",
+    )
+    donor_patient = models.ForeignKey(
+        "crm.Patient",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operation_bookings_as_donor",
+        help_text="Patient donneur (organe, sang, moelle, etc.).",
+    )
+
+    start_datetime = models.DateTimeField()
+    end_datetime   = models.DateTimeField()
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.CONFIRMED,
+    )
+
+    operation_type = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Ex : Cholécystectomie, Greffe rénale, Appendicectomie",
+    )
+    notes = models.TextField(blank=True)
+
+    booked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operation_bookings_created",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering            = ["start_datetime"]
+        verbose_name        = "Réservation de bloc opératoire"
+        verbose_name_plural = "Réservations de bloc opératoire"
+
+    def __str__(self):
+        donor = f" + donneur: {self.donor_patient}" if self.with_donor and self.donor_patient else ""
+        return (
+            f"{self.room.name} — {self.patient}{donor} "
+            f"[{self.start_datetime:%d/%m/%Y %H:%M}–{self.end_datetime:%H:%M}]"
+        )
+
+    def clean(self):
+        if self.end_datetime and self.start_datetime and self.end_datetime <= self.start_datetime:
+            raise ValidationError("La fin doit être postérieure au début.")
+        if self.room_id:
+            from crm.models import Room
+            if self.room.usage != Room.Usage.OPERATION_ROOM:
+                raise ValidationError(
+                    f"La salle « {self.room.name} » n'est pas une salle d'opération."
+                )
+        if self.with_donor and not self.donor_patient_id:
+            raise ValidationError(
+                "Un patient donneur doit être sélectionné quand 'avec donneur' est coché."
+            )
+        if self.donor_patient_id and self.donor_patient_id == self.patient_id:
+            raise ValidationError(
+                "Le patient et le donneur ne peuvent pas être la même personne."
+            )
+
+    def has_conflict(self):
+        """True if another confirmed/pending operation booking overlaps in the same room."""
+        qs = OperationBooking.objects.filter(
+            room=self.room,
+            status__in=[self.Status.CONFIRMED, self.Status.PENDING],
+            start_datetime__lt=self.end_datetime,
+            end_datetime__gt=self.start_datetime,
+        )
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+        return qs.exists()
+
+
+class OperationStaff(models.Model):
+    """
+    Links an employee (doctor / nurse) to an OperationBooking with their role.
+    One employee can only appear once per operation (unique_together).
+    """
+
+    operation = models.ForeignKey(
+        OperationBooking,
+        on_delete=models.CASCADE,
+        related_name="staff_assignments",
+    )
+    # Lazy import avoids circular dependency: hr → crm would be circular.
+    employee = models.ForeignKey(
+        "hr.Employee",
+        on_delete=models.CASCADE,
+        related_name="operation_assignments",
+    )
+    role = models.CharField(
+        max_length=100,
+        help_text="Rôle dans l'opération : Chirurgien principal, Anesthésiste, Infirmier(e) de bloc…",
+    )
+
+    class Meta:
+        unique_together     = [("operation", "employee")]
+        verbose_name        = "Personnel assigné"
+        verbose_name_plural = "Personnel assigné"
+
+    def __str__(self):
+        return f"{self.employee} — {self.role} ({self.operation})"
 
 class Patient(models.Model):
+    # ── CNAM coverage scheme ──────────────────────────────────────────────────
+    # Tunisia's CNAM runs three distinct pathways that determine how an invoice
+    # is split between what the patient pays at the counter and what CNAM settles
+    # directly with the clinic. This choice is made at affiliation time and can
+    # be updated annually (October–November window).
+    class CnamScheme(models.TextChoices):
+        NONE          = "none",          "Sans couverture CNAM"
+        PUBLIC        = "public",        "Filière publique (CNSS/hôpital)"
+        REMBOURSEMENT = "remboursement", "Filière remboursement"
+        TIERS_PAYANT  = "tiers_payant",  "Tiers payant (médecin traitant)"
+
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     cin = models.CharField(max_length=20, unique=True, blank=True, null=True)
@@ -255,6 +547,19 @@ class Patient(models.Model):
     medical_record_number = models.CharField(max_length=50, unique=True, blank=True)
     diagnosis = models.TextField(blank=True)
     notes = models.TextField(blank=True)
+
+    # ── CNAM fields ───────────────────────────────────────────────────────────
+    cnam_scheme = models.CharField(
+        max_length=20,
+        choices=CnamScheme.choices,
+        default=CnamScheme.NONE,
+        help_text="Filière CNAM choisie par l'assuré lors de son affiliation.",
+    )
+    cnam_affiliation_number = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Numéro d'affiliation CNAM (CNSS ou CNRPS).",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -534,20 +839,6 @@ class Ticket(models.Model):
     )
     # resolved_at: set automatically when statut transitions to Résolu or Fermé.
     resolved_at = models.DateTimeField(null=True, blank=True)
-
-    # ── Archive fields (S2) ───────────────────────────────────────────────────
-    is_archived = models.BooleanField(
-        default=False,
-        help_text="Ticket archivé (visible uniquement par le Directeur Support).",
-    )
-    archived_at = models.DateTimeField(null=True, blank=True)
-    archived_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="archived_tickets",
-    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1036,6 +1327,13 @@ class DoctorAvailability(models.Model):
     start_time  = models.TimeField()
     end_time    = models.TimeField()
     is_active   = models.BooleanField(default=True)
+    room = models.ForeignKey(
+        "Room",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="doctor_availabilities",
+        help_text="Salle dédiée à ce créneau (optionnel).",
+    )
  
     class Meta:
         ordering = ["day_of_week", "start_time"]

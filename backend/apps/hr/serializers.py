@@ -1,13 +1,50 @@
 # apps/hr/serializers.py
 import re
-from datetime import datetime, time
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.utils import timezone
 
 from .models import Absence, Employee, LeaveRequest, SalaryAdvance, Shift
 from apps.accounts.models import RolePermission
+
+
+def _send_employee_welcome_email(
+    to_email: str,
+    full_name: str,
+    username: str,
+    raw_password: str,
+) -> None:
+    """
+    Send a welcome email to a newly created employee with their login credentials.
+    Uses Django's send_mail; fails silently so a misconfigured SMTP server
+    never blocks employee creation.
+    """
+    from django.core.mail import send_mail
+    from django.conf import settings
+
+    frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+    login_url = f"{frontend_url}/login" if frontend_url else "the application"
+
+    subject = "Bienvenue — vos identifiants de connexion"
+    body = (
+        f"Bonjour {full_name},\n\n"
+        "Votre compte a été créé sur l'application de gestion.\n\n"
+        f"  Identifiant : {username}\n"
+        f"  Mot de passe : {raw_password}\n\n"
+        f"Connectez-vous ici : {login_url}\n\n"
+        "Nous vous recommandons de changer votre mot de passe lors de votre "
+        "première connexion.\n\n"
+        "Cordialement,\nL'équipe RH"
+    )
+
+    send_mail(
+        subject=subject,
+        message=body,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@hospital.tn"),
+        recipient_list=[to_email],
+        fail_silently=True,
+    )
+
 
 User = get_user_model()
 
@@ -56,10 +93,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
     meal_allowance = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, write_only=True)
     bonus_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, write_only=True)
     salary = serializers.SerializerMethodField()
-    leave_credit_days = serializers.SerializerMethodField()
-    leave_days_used = serializers.SerializerMethodField()
-    leave_days_remaining = serializers.SerializerMethodField()
-    notes = serializers.CharField(source="address", required=False, allow_blank=True)
+    leave_days_used = serializers.FloatField(source="leave_days_used_this_year", read_only=True)
+    leave_days_remaining = serializers.FloatField(source="leave_days_remaining_this_year", read_only=True)
 
     role_name = serializers.CharField(source="role.role_name", read_only=True, default=None)
     role_id = serializers.IntegerField(source="role.id", read_only=True, default=None)
@@ -128,22 +163,6 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "total_monthly_compensation": str(salary.total_monthly_compensation),
         }
 
-    def get_leave_credit_days(self, obj):
-        return "30.0"
-
-    def get_leave_days_used(self, obj):
-        today = timezone.now().date()
-        start = today.replace(month=1, day=1)
-        total = 0
-        for leave in obj.leave_requests.filter(status=LeaveRequest.Status.ACCEPTEE, start_date__year=today.year):
-            date_debut = max(leave.start_date, start)
-            date_fin = min(leave.end_date, today.replace(month=12, day=31))
-            total += max((date_fin - date_debut).days + 1, 0)
-        return float(total)
-
-    def get_leave_days_remaining(self, obj):
-        return max(30.0 - self.get_leave_days_used(obj), 0.0)
-
     def _salary_payload(self, validated_data):
         keys = (
             "base_salary",
@@ -154,9 +173,6 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "bonus_percentage",
         )
         return {key: validated_data.pop(key) for key in keys if key in validated_data}
-
-    def _discard_legacy_payload(self, validated_data):
-        validated_data.pop("leave_credit_days", None)
 
     def _save_salary(self, employee, salary_data):
         if not salary_data:
@@ -181,7 +197,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             [
                 "médecin", "doctor", "chirurgien", "radiologue", "oncologue",
                 "infirmier", "infirmière", "aide-soignant", "kiné", "pharmacien",
-                "radiothérapeute", "radiotherapist", "physicien médical",
+                "radiothérapeute", "physicien médical",
                 "technicien de radiologie", "manipulateur radio",
             ],
             "medical",
@@ -214,7 +230,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     # Used when creating the Django User so the profile gets a sensible
     # built-in role instead of always defaulting to ASSISTANT.
     _DEPARTMENT_TO_PROFILE_ROLE: dict[str, str] = {
-        "medical": "radiotherapist",
+        "medical": "doctor",
         "finance": "accountant",
         "support": "support_client",
         "hr": "hr",
@@ -322,9 +338,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
         import secrets as _secrets
         from apps.accounts.models import UserProfile
 
-        if email:
-            existing = User.objects.filter(email__iexact=email).first()
+        # Only reuse an existing User when a real, non-blank email was provided.
+        # An empty string would match every User whose email is also blank,
+        # which causes the guard below to fire incorrectly for new employees.
+        if email and email.strip():
+            existing = User.objects.filter(email__iexact=email.strip()).first()
             if existing:
+                # Return the user AND signal to the caller that we reused one
+                # so the guard can decide whether to block.
+                existing._reused_by_email = True
                 return existing
 
         username = _build_username(first_name, last_name)
@@ -332,11 +354,12 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
         user = User.objects.create_user(
             username=username,
-            email=email or "",
+            email=email.strip() if email else "",
             first_name=first_name,
             last_name=last_name,
             password=raw_password,
         )
+        user._reused_by_email = False  # freshly created — guard must not block
 
         # Resolve department + profile role from job_title
         dept = self._infer_department(job_title or "")
@@ -350,6 +373,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 except ValueError:
                     pass  # unrecognised value → keep ASSISTANT
 
+        # Disconnect sync_employee_on_role_change while we update the profile.
+        # The EmployeeSerializer.create() will insert the Employee record itself
+        # immediately after this method returns — if the signal fires here first
+        # it creates a duplicate Employee and super().create() crashes with a
+        # UNIQUE constraint error on hr_employee.user_id.
+        from django.db.models.signals import post_save
+        from apps.accounts.signals import sync_employee_on_role_change
+        from apps.accounts.models import UserProfile as _UP
+
+        post_save.disconnect(sync_employee_on_role_change, sender=_UP)
         try:
             profile = user.profile
             profile.role = profile_role
@@ -357,6 +390,20 @@ class EmployeeSerializer(serializers.ModelSerializer):
             profile.save(update_fields=["role", "department"])
         except UserProfile.DoesNotExist:
             UserProfile.objects.create(user=user, role=profile_role, department=dept or "")
+        finally:
+            post_save.connect(sync_employee_on_role_change, sender=_UP)
+
+        # Send a welcome / credentials email if the user has an email address.
+        # raw_password is either the admin-supplied password or the auto-generated
+        # token — either way it's available here and only here (not stored in plain
+        # text elsewhere), so this is the right place to include it in the email.
+        if email and email.strip():
+            _send_employee_welcome_email(
+                to_email=email.strip(),
+                full_name=f"{first_name} {last_name}".strip(),
+                username=user.username,
+                raw_password=raw_password,
+            )
 
         return user
 
@@ -376,7 +423,6 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        self._discard_legacy_payload(validated_data)
         job_title = validated_data.get("job_title", "")
         department = validated_data.get("department", "")
         password = self._superuser_only_password(validated_data)
@@ -397,6 +443,24 @@ class EmployeeSerializer(serializers.ModelSerializer):
             )
             validated_data["user"] = user
 
+        # ── Guard: prevent duplicate Employee when an existing User was reused ──
+        # Always query by PK — the _reused_by_email attribute approach is
+        # unreliable because the ORM returns fresh Python objects from the DB.
+        # A brand-new User has no Employee yet → filter returns None → no error.
+        # A reused User (matched by email) may already own one → raise 400.
+        resolved_user = validated_data.get("user")
+        if resolved_user is not None:
+            conflict = Employee.objects.filter(user_id=resolved_user.pk).first()
+            if conflict:
+                raise serializers.ValidationError({
+                    "email": (
+                        f"Un employé existe déjà pour cet utilisateur "
+                        f"(#{conflict.id} — {conflict.first_name} {conflict.last_name}). "
+                        "Modifiez-le via PATCH /api/hr/employees/"
+                        f"{conflict.id}/ au lieu d'en créer un nouveau."
+                    )
+                })
+
         salary_data = self._salary_payload(validated_data)
         employee = super().create(validated_data)
         self._save_salary(employee, salary_data)
@@ -404,7 +468,6 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
-        self._discard_legacy_payload(validated_data)
         password = self._superuser_only_password(validated_data)
 
         # If job title or department changed, refresh the role
@@ -439,16 +502,18 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
 class LeaveRequestSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.__str__", read_only=True)
-    date_debut = serializers.DateField(source="start_date")
-    date_fin = serializers.DateField(source="end_date")
-    motif = serializers.CharField(source="reason", required=False, allow_blank=True)
-    statut = serializers.CharField(source="status", required=False)
-    notes = serializers.SerializerMethodField()
-    approved_by = serializers.PrimaryKeyRelatedField(source="reviewed_by", read_only=True)
-    approved_by_name = serializers.CharField(source="reviewed_by.username", read_only=True, default=None)
-    duration_days = serializers.SerializerMethodField()
-    employee_leave_credit_days = serializers.SerializerMethodField()
-    employee_leave_days_remaining = serializers.SerializerMethodField()
+    approved_by_name = serializers.CharField(source="approved_by.username", read_only=True, default=None)
+    duration_days = serializers.IntegerField(read_only=True)
+    employee_leave_credit_days = serializers.DecimalField(
+        source="employee.leave_credit_days",
+        max_digits=5,
+        decimal_places=1,
+        read_only=True,
+    )
+    employee_leave_days_remaining = serializers.FloatField(
+        source="employee.leave_days_remaining_this_year",
+        read_only=True,
+    )
 
     class Meta:
         model = LeaveRequest
@@ -478,22 +543,9 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_notes(self, obj):
-        return ""
-
-    def get_duration_days(self, obj):
-        return max((obj.end_date - obj.start_date).days + 1, 0)
-
-    def get_employee_leave_credit_days(self, obj):
-        return "30.0"
-
-    def get_employee_leave_days_remaining(self, obj):
-        return EmployeeSerializer().get_leave_days_remaining(obj.employee)
-
 
 class AbsenceSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.__str__", read_only=True)
-    motif = serializers.CharField(source="justification", required=False, allow_blank=True)
 
     class Meta:
         model = Absence
@@ -507,20 +559,10 @@ class AbsenceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "employee_name", "created_at"]
 
-    def create(self, validated_data):
-        validated_data.setdefault("absence_type", Absence.AbsenceType.INJUSTIFIE)
-        return super().create(validated_data)
-
 
 class SalaryAdvanceSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.__str__", read_only=True)
-    request_date = serializers.SerializerMethodField()
-    statut = serializers.CharField(source="status", required=False)
-    repayment_date = serializers.SerializerMethodField()
-    amount_repaid = serializers.SerializerMethodField()
-    notes = serializers.SerializerMethodField()
-    approved_by = serializers.PrimaryKeyRelatedField(source="reviewed_by", read_only=True)
-    approved_by_name = serializers.CharField(source="reviewed_by.username", read_only=True, default=None)
+    approved_by_name = serializers.CharField(source="approved_by.username", read_only=True, default=None)
 
     class Meta:
         model = SalaryAdvance
@@ -549,27 +591,9 @@ class SalaryAdvanceSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_request_date(self, obj):
-        return obj.created_at.date() if obj.created_at else None
-
-    def get_repayment_date(self, obj):
-        return None
-
-    def get_amount_repaid(self, obj):
-        return str(obj.amount if obj.status == "Remboursée" else 0)
-
-    def get_notes(self, obj):
-        return ""
-
 
 class ShiftSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.__str__", read_only=True)
-    title = serializers.CharField(required=False, allow_blank=True)
-    start_datetime = serializers.DateTimeField(required=False)
-    end_datetime = serializers.DateTimeField(required=False)
-    location = serializers.CharField(required=False, allow_blank=True)
-    status = serializers.CharField(required=False, default="planned")
-    updated_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Shift
@@ -588,50 +612,6 @@ class ShiftSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "employee_name", "created_at", "updated_at"]
 
-    def to_representation(self, instance):
-        start_dt = timezone.make_aware(datetime.combine(instance.date, instance.start_time))
-        end_dt = timezone.make_aware(datetime.combine(instance.date, instance.end_time))
-        return {
-            "id": instance.id,
-            "employee": instance.employee_id,
-            "employee_name": str(instance.employee),
-            "title": "Shift",
-            "start_datetime": start_dt.isoformat(),
-            "end_datetime": end_dt.isoformat(),
-            "location": "",
-            "status": "planned",
-            "notes": instance.notes,
-            "created_at": instance.created_at,
-            "updated_at": instance.created_at,
-        }
-
-    def get_updated_at(self, obj):
-        return obj.created_at
-
-    def _apply_datetime_payload(self, validated_data):
-        start_dt = validated_data.pop("start_datetime", None)
-        end_dt = validated_data.pop("end_datetime", None)
-        validated_data.pop("title", None)
-        validated_data.pop("location", None)
-        validated_data.pop("status", None)
-
-        if start_dt:
-            validated_data["date"] = start_dt.date()
-            validated_data["start_time"] = start_dt.time()
-        if end_dt:
-            validated_data.setdefault("date", end_dt.date())
-            validated_data["end_time"] = end_dt.time()
-        validated_data.setdefault("date", timezone.now().date())
-        validated_data.setdefault("start_time", time(9, 0))
-        validated_data.setdefault("end_time", time(17, 0))
-        return validated_data
-
-    def create(self, validated_data):
-        return super().create(self._apply_datetime_payload(validated_data))
-
-    def update(self, instance, validated_data):
-        return super().update(instance, self._apply_datetime_payload(validated_data))
-
 
 # ─── US-RH-01 : Compétences & Formations ─────────────────────────────────────
 
@@ -639,32 +619,19 @@ from .models import Skill, EmployeeSkill, TrainingSession, TrainingEnrollment
 
 
 class SkillSerializer(serializers.ModelSerializer):
-    category = serializers.SerializerMethodField()
-    category_label = serializers.SerializerMethodField()
-    is_active = serializers.SerializerMethodField()
+    category_label = serializers.CharField(source="get_category_display", read_only=True)
 
     class Meta:
         model = Skill
         fields = ["id", "name", "category", "category_label", "description", "is_active", "created_at"]
         read_only_fields = ["id", "category_label", "created_at"]
 
-    def get_category_label(self, obj):
-        return "Autre"
-
-    def get_category(self, obj):
-        return "other"
-
-    def get_is_active(self, obj):
-        return True
-
 
 class EmployeeSkillSerializer(serializers.ModelSerializer):
     skill_name = serializers.CharField(source="skill.name", read_only=True)
-    skill_category = serializers.SerializerMethodField()
+    skill_category = serializers.CharField(source="skill.get_category_display", read_only=True)
     level_label = serializers.CharField(source="get_level_display", read_only=True)
     employee_name = serializers.CharField(source="employee.__str__", read_only=True)
-    acquired_date = serializers.SerializerMethodField()
-    updated_at = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeSkill
@@ -679,25 +646,10 @@ class EmployeeSkillSerializer(serializers.ModelSerializer):
             "employee_name", "created_at", "updated_at",
         ]
 
-    def get_skill_category(self, obj):
-        return "other"
-
-    def get_updated_at(self, obj):
-        return obj.created_at
-
-    def get_acquired_date(self, obj):
-        return None
-
-
 
 class TrainingEnrollmentSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.__str__", read_only=True)
-    result = serializers.SerializerMethodField()
-    result_label = serializers.SerializerMethodField()
-    score = serializers.SerializerMethodField()
-    certificate_issued = serializers.SerializerMethodField()
-    notes = serializers.SerializerMethodField()
-    updated_at = serializers.SerializerMethodField()
+    result_label = serializers.CharField(source="get_result_display", read_only=True)
 
     class Meta:
         model = TrainingEnrollment
@@ -709,37 +661,12 @@ class TrainingEnrollmentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "employee_name", "result_label", "enrolled_at", "updated_at"]
 
-    def get_result(self, obj):
-        return "passed" if obj.completed else "pending"
-
-    def get_result_label(self, obj):
-        return "Reussi" if obj.completed else "En attente"
-
-    def get_score(self, obj):
-        return None
-
-    def get_certificate_issued(self, obj):
-        return bool(obj.certificate)
-
-    def get_notes(self, obj):
-        return ""
-
-    def get_updated_at(self, obj):
-        return obj.enrolled_at
-
 
 class TrainingSessionSerializer(serializers.ModelSerializer):
-    skill = serializers.SerializerMethodField()
-    skill_name = serializers.SerializerMethodField()
-    status = serializers.CharField(required=False)
+    skill_name = serializers.CharField(source="skill.name", read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     enrollments = TrainingEnrollmentSerializer(many=True, read_only=True)
     enrolled_count = serializers.SerializerMethodField()
-    duration_hours = serializers.SerializerMethodField()
-    max_participants = serializers.SerializerMethodField()
-    cost = serializers.SerializerMethodField()
-    notes = serializers.SerializerMethodField()
-    created_by = serializers.IntegerField(read_only=True)
     created_by_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -760,213 +687,13 @@ class TrainingSessionSerializer(serializers.ModelSerializer):
     def get_enrolled_count(self, obj):
         return obj.enrollments.count()
 
-    def get_skill_name(self, obj):
-        return ""
-
-    def get_skill(self, obj):
-        return None
-
-    def get_duration_hours(self, obj):
-        return "0.0"
-
-    def get_max_participants(self, obj):
-        return 0
-
-    def get_cost(self, obj):
-        return "0.00"
-
-    def get_notes(self, obj):
-        return ""
-
     def get_created_by_name(self, obj):
-        return None
-
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        status_map = {
-            TrainingSession.Status.PLANIFIE: "planned",
-            TrainingSession.Status.EN_COURS: "ongoing",
-            TrainingSession.Status.TERMINE: "completed",
-            TrainingSession.Status.ANNULE: "cancelled",
-        }
-        data["status"] = status_map.get(instance.status, instance.status)
-        data["skill"] = None
-        data["duration_hours"] = data.get("duration_hours") or "0.0"
-        data["max_participants"] = data.get("max_participants") or 0
-        data["cost"] = data.get("cost") or "0.00"
-        data["notes"] = data.get("notes") or ""
-        data["created_by"] = None
-        return data
-
-    def _normalize_payload(self, validated_data):
-        status_map = {
-            "planned": TrainingSession.Status.PLANIFIE,
-            "ongoing": TrainingSession.Status.EN_COURS,
-            "completed": TrainingSession.Status.TERMINE,
-            "cancelled": TrainingSession.Status.ANNULE,
-        }
-        if "status" in validated_data:
-            validated_data["status"] = status_map.get(validated_data["status"], validated_data["status"])
-        for key in ("skill", "duration_hours", "max_participants", "cost", "notes"):
-            validated_data.pop(key, None)
-        return validated_data
+        if not obj.created_by:
+            return None
+        return obj.created_by.get_full_name() or obj.created_by.username
 
     def create(self, validated_data):
-        return super().create(self._normalize_payload(validated_data))
-
-    def update(self, instance, validated_data):
-        return super().update(instance, self._normalize_payload(validated_data))
-
-# ── S3: Document Request Serializer ──────────────────────────────────────────
-
-from .models import DocumentRequest
-
-class DocumentRequestSerializer(serializers.ModelSerializer):
-    employee_name          = serializers.SerializerMethodField()
-    handled_by_name        = serializers.SerializerMethodField()
-    document_type_display  = serializers.CharField(source="get_document_type_display", read_only=True)
-
-    class Meta:
-        model = DocumentRequest
-        fields = [
-            "id", "employee", "employee_name", "document_type", "document_type_display",
-            "motif", "statut", "notes_rh", "handled_by", "handled_by_name",
-            "created_at", "updated_at",
-        ]
-        read_only_fields = ["id", "employee_name", "handled_by_name", "document_type_display", "created_at", "updated_at"]
-
-    def get_employee_name(self, obj):
-        return str(obj.employee)
-
-    def get_handled_by_name(self, obj):
-        if obj.handled_by:
-            return obj.handled_by.get_full_name() or obj.handled_by.username
-        return None
-
-
-# ── S6: Recruitment Serializers ───────────────────────────────────────────────
-
-from .models import JobPost, Application, RecruitmentComment
-
-
-class JobPostSerializer(serializers.ModelSerializer):
-    created_by_name          = serializers.CharField(source="created_by.username", read_only=True)
-    application_count        = serializers.IntegerField(read_only=True)
-    status_display           = serializers.CharField(source="get_status_display", read_only=True)
-    contract_type_display    = serializers.CharField(source="get_contract_type_display", read_only=True)
-    experience_level_display = serializers.CharField(source="get_experience_level_display", read_only=True)
-
-    class Meta:
-        model = JobPost
-        fields = [
-            "id", "title", "department", "contract_type", "contract_type_display",
-            "experience_level", "experience_level_display", "location",
-            "salary_range_min", "salary_range_max", "description", "requirements",
-            "benefits", "responsibilities", "posted_at", "closing_date", "start_date",
-            "status", "status_display", "is_internal", "application_count",
-            "created_by", "created_by_name", "created_at", "updated_at",
-        ]
-        read_only_fields = ["id", "posted_at", "application_count", "created_by", "created_at", "updated_at"]
-
-
-class ApplicationSerializer(serializers.ModelSerializer):
-    job_title        = serializers.CharField(source="job_post.title", read_only=True)
-    candidate_name   = serializers.SerializerMethodField()
-    referred_by_name = serializers.SerializerMethodField()
-    status_display   = serializers.CharField(source="get_status_display", read_only=True)
-    source_display   = serializers.CharField(source="get_source_display", read_only=True)
-
-    class Meta:
-        model = Application
-        fields = [
-            "id", "job_post", "job_title", "candidate", "candidate_name",
-            "referred_by", "referred_by_name", "status", "status_display",
-            "source", "source_display", "first_name", "last_name", "email",
-            "phone", "cover_letter_text", "rating", "interview_notes", "feedback",
-            "applied_at", "reviewed_at", "interview_date", "offer_sent_at",
-            "accepted_at", "rejected_at", "reviewed_by", "created_at", "updated_at",
-        ]
-        read_only_fields = [
-            "id", "applied_at", "reviewed_at", "accepted_at", "rejected_at",
-            "offer_sent_at", "reviewed_by", "created_at", "updated_at",
-        ]
-
-    def get_candidate_name(self, obj):
-        return str(obj.candidate) if obj.candidate else None
-
-    def get_referred_by_name(self, obj):
-        return str(obj.referred_by) if obj.referred_by else None
-
-
-class RecruitmentCommentSerializer(serializers.ModelSerializer):
-    author_name = serializers.CharField(source="author.username", read_only=True)
-
-    class Meta:
-        model = RecruitmentComment
-        fields = "__all__"
-        read_only_fields = ["id", "author", "created_at"]
-
-
-# ── S7: Social Events & Motivations Serializers ───────────────────────────────
-
-from .models import SocialEvent, SocialEventComment, EmployeeRecognition, EmployeeBirthday
-
-
-class SocialEventSerializer(serializers.ModelSerializer):
-    organized_by_name  = serializers.CharField(source="organized_by.username", read_only=True)
-    participant_count  = serializers.IntegerField(read_only=True)
-    is_full            = serializers.BooleanField(read_only=True)
-    event_type_display = serializers.CharField(source="get_event_type_display", read_only=True)
-    status_display     = serializers.CharField(source="get_status_display", read_only=True)
-    participants_list  = serializers.SerializerMethodField()
-
-    class Meta:
-        model = SocialEvent
-        fields = [
-            "id", "title", "event_type", "event_type_display", "description",
-            "event_date", "start_time", "end_time", "location",
-            "participants", "participants_list", "participant_count",
-            "max_participants", "is_full", "organized_by", "organized_by_name",
-            "budget", "status", "status_display", "created_at", "updated_at",
-        ]
-        read_only_fields = ["id", "participant_count", "is_full", "created_at", "updated_at"]
-
-    def get_participants_list(self, obj):
-        return [f"{p.first_name} {p.last_name}" for p in obj.participants.all()[:10]]
-
-
-class SocialEventCommentSerializer(serializers.ModelSerializer):
-    author_name = serializers.CharField(source="author.username", read_only=True)
-
-    class Meta:
-        model = SocialEventComment
-        fields = "__all__"
-        read_only_fields = ["id", "author", "created_at"]
-
-
-class EmployeeRecognitionSerializer(serializers.ModelSerializer):
-    employee_name            = serializers.SerializerMethodField()
-    awarded_by_name          = serializers.CharField(source="awarded_by.username", read_only=True)
-    recognition_type_display = serializers.CharField(source="get_recognition_type_display", read_only=True)
-
-    class Meta:
-        model = EmployeeRecognition
-        fields = "__all__"
-        read_only_fields = ["id", "awarded_at", "created_at", "awarded_by"]
-
-    def get_employee_name(self, obj):
-        return str(obj.employee)
-
-
-class EmployeeBirthdaySerializer(serializers.ModelSerializer):
-    employee_name = serializers.SerializerMethodField()
-    next_birthday = serializers.DateField(read_only=True)
-    age           = serializers.IntegerField(read_only=True)
-
-    class Meta:
-        model = EmployeeBirthday
-        fields = "__all__"
-        read_only_fields = ["id", "created_at"]
-
-    def get_employee_name(self, obj):
-        return str(obj.employee)
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            validated_data["created_by"] = request.user
+        return super().create(validated_data)

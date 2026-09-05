@@ -12,7 +12,7 @@ from apps.crm.models import Appointment, Patient, Ticket, TreatmentPlan, Treatme
 from apps.hr.models import Employee, LeaveRequest, Absence, Shift
 from apps.payroll.models import EmployeeSalary
 
-from apps.accounts.permissions import AdminOnlyPermission
+
 OVERDUE_DAYS = 60
 RESOLVED_STATUSES = ["Résolu", "Fermé"]
 
@@ -34,7 +34,6 @@ class DashboardSummaryView(APIView):
     # Rôles racine → département de référence (fallback si department vide)
     ROLE_TO_DEPARTMENT = {
         "doctor":         "medical",
-        "radiotherapist": "medical",
         "receptionist":   "medical",
         "accountant":     "finance",
         "support_client": "support",
@@ -55,8 +54,7 @@ class DashboardSummaryView(APIView):
         """
         profile = getattr(user, "profile", None)
         role = profile.role if profile else None
-        _dept_obj = getattr(profile, "department", None) if profile else None
-        raw_department = (_dept_obj.name.strip().lower() if _dept_obj else "")
+        raw_department = (profile.department or "").strip().lower() if profile else ""
 
         # Admin et manager voient tout
         if role in ("admin", "manager"):
@@ -85,8 +83,7 @@ class DashboardSummaryView(APIView):
         user = request.user
         profile = getattr(user, "profile", None)
         role = profile.role if profile else None
-        _dept_obj2 = getattr(profile, "department", None) if profile else None
-        department = (_dept_obj2.name.strip() if _dept_obj2 else "")
+        department = (profile.department or "").strip() if profile else ""
 
         # Common stats (toujours utiles)
         common_stats = {
@@ -214,23 +211,24 @@ class DashboardSummaryView(APIView):
         
         return {
             "leave_requests_count": LeaveRequest.objects.count(),
-            "pending_leave_requests_count": LeaveRequest.objects.filter(status="En attente").count(),
+            "pending_leave_requests_count": LeaveRequest.objects.filter(statut="En attente").count(),
             "approved_leaves_this_month": LeaveRequest.objects.filter(
-                status=LeaveRequest.Status.ACCEPTEE,
-                start_date__month=timezone.now().month
+                statut="Acceptée",
+                date_debut__month=timezone.now().month
             ).count(),
             "absences_today": Absence.objects.filter(date=today).count(),
             "shifts_today": Shift.objects.filter(
-                date=today
+                start_datetime__date=today
             ).count(),
             "uncovered_shifts_today": Shift.objects.filter(
-                date=today
+                start_datetime__date=today,
+                status="cancelled"
             ).count(),
             "active_employees": Employee.objects.filter(is_active=True).count(),
             "employees_on_leave_today": LeaveRequest.objects.filter(
-                status=LeaveRequest.Status.ACCEPTEE,
-                start_date__lte=today,
-                end_date__gte=today
+                statut="Acceptée",
+                date_debut__lte=today,
+                date_fin__gte=today
             ).values("employee").distinct().count(),
         }
 
@@ -388,24 +386,24 @@ class KpiDashboardView(APIView):
         # ── 3. DIMENSION RH ───────────────────────────────────────────────────
         total_emp = Employee.objects.count()
         active_emp = Employee.objects.filter(is_active=True).count()
-        pending_lvs = LeaveRequest.objects.filter(status="En attente").count()
+        pending_lvs = LeaveRequest.objects.filter(statut="En attente").count()
         abs_today = Absence.objects.filter(date=today).count()
         taux_absence = _pct(abs_today, active_emp)
 
         on_leave_today = LeaveRequest.objects.filter(
-            status=LeaveRequest.Status.ACCEPTEE,
-            start_date__lte=today,
-            end_date__gte=today,
+            statut="Acceptée",
+            date_debut__lte=today,
+            date_fin__gte=today,
         ).values("employee").distinct().count()
 
-        shifts_today = Shift.objects.filter(date=today).count()
-        cancelled_shifts = 0
+        shifts_today = Shift.objects.filter(start_datetime__date=today).count()
+        cancelled_shifts = Shift.objects.filter(start_datetime__date=today, status="cancelled").count()
         taux_couverture = _pct(shifts_today - cancelled_shifts, shifts_today)
 
         lvs_this_month = LeaveRequest.objects.filter(
-            status=LeaveRequest.Status.ACCEPTEE,
-            start_date__month=today.month,
-            start_date__year=today.year,
+            statut="Acceptée",
+            date_debut__month=today.month,
+            date_debut__year=today.year,
         ).count()
 
         hr_kpis = [
@@ -591,152 +589,3 @@ class KpiDashboardView(APIView):
                 {"id": "accounting", "label": "Comptabilité & Trésorerie", "kpis": accounting_kpis},
             ],
         })
-
-# ── S4: Export Views ──────────────────────────────────────────────────────────
-
-import io
-from django.http import HttpResponse
-from django.utils import timezone as tz
-from django.db.models.functions import TruncMonth
-from django.db.models import Sum, Count
-from rest_framework.permissions import IsAuthenticated
-
-
-def _excel_response(data: list, headers: list, filename_prefix: str) -> HttpResponse:
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    except ImportError:
-        return HttpResponse("openpyxl not installed", status=500)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Rapport"
-    hfont = Font(bold=True, size=11, color="FFFFFF")
-    hfill = PatternFill(start_color="1a73e8", end_color="1a73e8", fill_type="solid")
-    border = Border(
-        left=Side(style="thin"), right=Side(style="thin"),
-        top=Side(style="thin"),  bottom=Side(style="thin"),
-    )
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=str(h))
-        cell.font = hfont; cell.fill = hfill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border
-    for ri, row in enumerate(data, 2):
-        for ci, val in enumerate(row, 1):
-            cell = ws.cell(row=ri, column=ci)
-            cell.value = "" if val is None else (float(val) if hasattr(val, "__float__") else str(val))
-            cell.border = border
-            cell.alignment = Alignment(horizontal="left", vertical="center")
-    for col in range(1, len(headers) + 1):
-        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = 22
-    filename = f"{filename_prefix}_{tz.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
-    wb.save(response)
-    return response
-
-
-def _pdf_response(data: list, headers: list, filename_prefix: str, title: str = "Rapport") -> HttpResponse:
-    try:
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import cm
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-        from reportlab.lib.styles import getSampleStyleSheet
-    except ImportError:
-        return HttpResponse("reportlab not installed", status=500)
-
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=1*cm, leftMargin=1*cm, topMargin=1*cm, bottomMargin=1*cm)
-    styles = getSampleStyleSheet()
-    tdata = [[Paragraph(str(h), styles["Heading4"]) for h in headers]]
-    for row in data:
-        tdata.append([Paragraph(str(v) if v is not None else "", styles["Normal"]) for v in row])
-    tbl = Table(tdata, repeatRows=1)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a73e8")),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, 0), 10),
-        ("FONTSIZE",   (0, 1), (-1, -1), 9),
-        ("GRID",       (0, 0), (-1, -1), 0.5, colors.grey),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING",    (0, 0), (-1, -1), 5),
-    ]))
-    elements = [
-        Paragraph(title, styles["Heading1"]),
-        Spacer(1, 0.3*cm),
-        Paragraph(f"Généré le : {tz.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]),
-        Spacer(1, 0.4*cm),
-        tbl,
-    ]
-    doc.build(elements)
-    pdf = buf.getvalue(); buf.close()
-    filename = f"{filename_prefix}_{tz.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    response = HttpResponse(content_type="application/pdf")
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
-    response.write(pdf)
-    return response
-
-
-class ExportTicketsView(APIView):
-    permission_classes = [IsAuthenticated]
-    def get(self, request):
-        from apps.crm.models import Ticket
-        tickets = Ticket.objects.select_related("client").all()
-        headers = ["N° Ticket", "Titre", "Priorité", "Statut", "Patient", "Créé le"]
-        data = [[t.numero, t.titre, t.priorite, t.statut, str(t.client), t.created_at.strftime("%d/%m/%Y")] for t in tickets]
-        fmt = request.query_params.get("format", "excel")
-        return _pdf_response(data, headers, "tickets", "Rapport Tickets") if fmt == "pdf" else _excel_response(data, headers, "tickets")
-
-
-class ExportPatientsView(APIView):
-    permission_classes = [AdminOnlyPermission]
-    def get(self, request):
-        from apps.crm.models import Patient
-        patients = Patient.objects.all()
-        headers = ["MRN", "Prénom", "Nom", "Email", "Téléphone", "Créé le"]
-        data = [[p.mrn, p.first_name, p.last_name, p.email, p.phone, p.created_at.strftime("%d/%m/%Y")] for p in patients]
-        fmt = request.query_params.get("format", "excel")
-        return _pdf_response(data, headers, "patients", "Rapport Patients") if fmt == "pdf" else _excel_response(data, headers, "patients")
-
-
-class ExportInvoicesView(APIView):
-    permission_classes = [AdminOnlyPermission]
-    def get(self, request):
-        from apps.accounting.models import Invoice
-        invoices = Invoice.objects.select_related("patient").all()
-        headers = ["N° Facture", "Patient", "Montant", "Statut", "Date émission"]
-        data = [[inv.invoice_number, str(inv.patient), float(inv.total_amount), inv.status,
-                 inv.issue_date.strftime("%d/%m/%Y") if inv.issue_date else ""] for inv in invoices]
-        fmt = request.query_params.get("format", "excel")
-        return _pdf_response(data, headers, "factures", "Rapport Factures") if fmt == "pdf" else _excel_response(data, headers, "factures")
-
-
-class ExportRevenueView(APIView):
-    permission_classes = [AdminOnlyPermission]
-    def get(self, request):
-        from apps.accounting.models import Invoice
-        rows = (Invoice.objects.annotate(month=TruncMonth("issue_date"))
-                .values("month").annotate(total=Sum("total_amount"), count=Count("id")).order_by("month"))
-        headers = ["Mois", "Total (TND)", "Nombre de factures"]
-        data = [[r["month"].strftime("%B %Y") if r["month"] else "N/A", float(r["total"] or 0), r["count"]] for r in rows]
-        fmt = request.query_params.get("format", "excel")
-        return _pdf_response(data, headers, "ca", "Chiffre d'affaires") if fmt == "pdf" else _excel_response(data, headers, "ca")
-
-
-class ExportSessionsView(APIView):
-    permission_classes = [AdminOnlyPermission]
-    def get(self, request):
-        from apps.crm.models import TreatmentSession
-        sessions = TreatmentSession.objects.select_related("treatment_plan__patient").all()
-        headers = ["Patient", "Plan", "N° Séance", "Statut", "Date prévue", "Dose (Gy)"]
-        data = [[str(s.treatment_plan.patient) if s.treatment_plan else "",
-                 s.treatment_plan.name if s.treatment_plan else "",
-                 s.session_number, s.status,
-                 s.scheduled_datetime.strftime("%d/%m/%Y") if s.scheduled_datetime else "",
-                 float(s.dose_delivered) if s.dose_delivered else ""] for s in sessions]
-        fmt = request.query_params.get("format", "excel")
-        return _pdf_response(data, headers, "seances", "Rapport Séances") if fmt == "pdf" else _excel_response(data, headers, "seances")

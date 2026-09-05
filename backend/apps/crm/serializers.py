@@ -10,6 +10,9 @@ from .models import (
     Incident,
     Machine,
     Room,
+    RoomBooking,
+    OperationBooking,
+    OperationStaff,
     TicketComment,
     PatientPortalAccount,
     PatientRating,
@@ -28,6 +31,10 @@ from .models import (
 
 
 class PatientSerializer(serializers.ModelSerializer):
+    cnam_scheme_display = serializers.CharField(
+        source="get_cnam_scheme_display", read_only=True
+    )
+
     class Meta:
         model = Patient
         fields = [
@@ -42,32 +49,63 @@ class PatientSerializer(serializers.ModelSerializer):
             "medical_record_number",
             "diagnosis",
             "notes",
+            "cnam_scheme",
+            "cnam_scheme_display",
+            "cnam_affiliation_number",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "medical_record_number", "created_at", "updated_at"]
+        read_only_fields = ["id", "medical_record_number", "cnam_scheme_display", "created_at", "updated_at"]
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source="patient.__str__", read_only=True)
 
+    doctor_id = serializers.SerializerMethodField()
+    doctor_name = serializers.SerializerMethodField()
+    appointment_type = serializers.SerializerMethodField()
+    duration_minutes = serializers.SerializerMethodField()
+    room_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Appointment
         fields = [
-            "id",
-            "patient",
-            "patient_name",
-            "title",
-            "appointment_date",
-            "status",
-            "reason",
-            "notes",
-            "created_at",
-            "updated_at",
+            "id", "patient", "patient_name", "title", "appointment_date",
+            "status", "reason", "notes", "created_at", "updated_at",
+            "doctor_id", "doctor_name", "appointment_type",
+            "duration_minutes", "room_name",
         ]
         read_only_fields = ["id", "patient_name", "created_at", "updated_at"]
 
+    def _get_extension(self, obj):
+        try:
+            return obj.extension
+        except AppointmentExtension.DoesNotExist:
+            return None
 
+    def get_doctor_id(self, obj):
+        ext = self._get_extension(obj)
+        return ext.doctor_id if ext else None
+
+    def get_doctor_name(self, obj):
+        ext = self._get_extension(obj)
+        if ext and ext.doctor:
+            return f"{ext.doctor.first_name} {ext.doctor.last_name}".strip() or ext.doctor.username
+        return None
+
+    def get_appointment_type(self, obj):
+        ext = self._get_extension(obj)
+        return ext.appointment_type if ext else None
+
+    def get_duration_minutes(self, obj):
+        ext = self._get_extension(obj)
+        return ext.duration_minutes if ext else None
+
+    def get_room_name(self, obj):
+        ext = self._get_extension(obj)
+        return ext.room.name if ext and ext.room else None
+    
+    
 class MaintenanceLogSerializer(serializers.ModelSerializer):
     duration_hours = serializers.ReadOnlyField()
     machine_name   = serializers.CharField(source="machine.name", read_only=True)
@@ -90,12 +128,13 @@ class MachineSerializer(serializers.ModelSerializer):
     book_value         = serializers.ReadOnlyField()
     calibration_overdue = serializers.ReadOnlyField()
     recent_logs        = serializers.SerializerMethodField()
+    room_name          = serializers.SerializerMethodField()
 
     class Meta:
         model = Machine
         fields = [
             "id", "name", "model", "serial_number", "manufacturer",
-            "status", "location",
+            "status", "room", "room_name", "location",
             # Lifecycle
             "purchase_date", "purchase_cost", "useful_life_years", "residual_value",
             # Calibration
@@ -114,24 +153,219 @@ class MachineSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
 
+    def get_room_name(self, obj):
+        if obj.room_id:
+            return str(obj.room.name)
+        return obj.location or None
+
     def get_recent_logs(self, obj):
         logs = obj.maintenance_logs.all()[:5]
         return MaintenanceLogSerializer(logs, many=True).data
 
 
 class RoomSerializer(serializers.ModelSerializer):
+    is_available     = serializers.BooleanField(read_only=True)
+    bookings_allowed = serializers.BooleanField(read_only=True)
+    active_bookings  = serializers.SerializerMethodField()
+    machines_count   = serializers.SerializerMethodField()
+
     class Meta:
-        model = Room
+        model  = Room
         fields = [
-            "id",
-            "name",
-            "status",
-            "notes",
-            "created_at",
-            "updated_at",
+            "id", "name", "usage", "specialty", "location", "capacity",
+            "status", "is_available", "bookings_allowed", "active_bookings",
+            "machines_count",
+            "notes", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def get_active_bookings(self, obj):
+        from django.utils import timezone
+        return obj.bookings.filter(
+            status__in=["confirmed", "pending"],
+            end_datetime__gte=timezone.now(),
+        ).count()
+
+    def get_machines_count(self, obj):
+        return obj.machines.count()
+
+
+class RoomBookingSerializer(serializers.ModelSerializer):
+    patient_name   = serializers.SerializerMethodField()
+    room_name      = serializers.CharField(source="room.name", read_only=True)
+    room_capacity  = serializers.IntegerField(source="room.capacity", read_only=True)
+    booked_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = RoomBooking
+        fields = [
+            "id",
+            "room", "room_name", "room_capacity",
+            "patient", "patient_name",
+            "occupants", "notes_companions",
+            "start_datetime", "end_datetime",
+            "status", "reason", "notes",
+            "booked_by", "booked_by_name",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "booked_by", "created_at", "updated_at"]
+
+    def get_patient_name(self, obj):
+        return f"{obj.patient.first_name} {obj.patient.last_name}".strip()
+
+    def get_booked_by_name(self, obj):
+        if not obj.booked_by:
+            return None
+        return (
+            f"{obj.booked_by.first_name} {obj.booked_by.last_name}".strip()
+            or obj.booked_by.username
+        )
+
+    def validate(self, attrs):
+        room      = attrs.get("room",           getattr(self.instance, "room", None))
+        occupants = attrs.get("occupants",      getattr(self.instance, "occupants", 1))
+        start     = attrs.get("start_datetime", getattr(self.instance, "start_datetime", None))
+        end       = attrs.get("end_datetime",   getattr(self.instance, "end_datetime", None))
+
+        if end and start and end <= start:
+            raise serializers.ValidationError("La fin doit être postérieure au début.")
+        if room and not room.bookings_allowed:
+            raise serializers.ValidationError(
+                f"La salle « {room.name} » est de type « {room.get_usage_display()} » "
+                f"et n'accepte pas de réservations patients. "
+                f"Seules les chambres médicalisées et les salles de rendez-vous sont réservables."
+            )
+        if room and occupants and room.bookings_allowed and occupants > room.capacity:
+            raise serializers.ValidationError(
+                f"Le nombre d'occupants ({occupants}) dépasse la capacité "
+                f"de la salle ({room.capacity})."
+            )
+        return attrs
+
+class OperationStaffSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+    employee_job  = serializers.CharField(source="employee.job_title", read_only=True)
+
+    class Meta:
+        model  = OperationStaff
+        fields = ["id", "employee", "employee_name", "employee_job", "role"]
+
+    def get_employee_name(self, obj):
+        return f"{obj.employee.first_name} {obj.employee.last_name}".strip()
+
+
+class OperationBookingSerializer(serializers.ModelSerializer):
+    patient_name      = serializers.SerializerMethodField()
+    donor_patient_name = serializers.SerializerMethodField()
+    room_name         = serializers.CharField(source="room.name", read_only=True)
+    booked_by_name    = serializers.SerializerMethodField()
+    # Nested staff — read as list, write via separate endpoint or writable nested
+    staff_assignments = OperationStaffSerializer(many=True, read_only=True)
+    # Write-only convenience: accept staff list on create/update
+    staff             = serializers.ListField(
+        child=serializers.DictField(),
+        write_only=True,
+        required=False,
+        help_text='[{"employee": <id>, "role": "Chirurgien principal"}, …]',
+    )
+
+    class Meta:
+        model  = OperationBooking
+        fields = [
+            "id",
+            "room", "room_name",
+            "patient", "patient_name",
+            "with_donor", "donor_patient", "donor_patient_name",
+            "start_datetime", "end_datetime",
+            "status", "operation_type", "notes",
+            "booked_by", "booked_by_name",
+            "staff_assignments",
+            "staff",          # write-only
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "booked_by", "created_at", "updated_at"]
+
+    # ── field-level helpers ───────────────────────────────────────────────────
+
+    def get_patient_name(self, obj):
+        return f"{obj.patient.first_name} {obj.patient.last_name}".strip()
+
+    def get_donor_patient_name(self, obj):
+        if obj.donor_patient:
+            return f"{obj.donor_patient.first_name} {obj.donor_patient.last_name}".strip()
+        return None
+
+    def get_booked_by_name(self, obj):
+        if not obj.booked_by:
+            return None
+        return (
+            f"{obj.booked_by.first_name} {obj.booked_by.last_name}".strip()
+            or obj.booked_by.username
+        )
+
+    # ── validation ────────────────────────────────────────────────────────────
+
+    def validate(self, attrs):
+        from crm.models import Room
+        room        = attrs.get("room",           getattr(self.instance, "room", None))
+        start       = attrs.get("start_datetime", getattr(self.instance, "start_datetime", None))
+        end         = attrs.get("end_datetime",   getattr(self.instance, "end_datetime", None))
+        with_donor  = attrs.get("with_donor",     getattr(self.instance, "with_donor", False))
+        donor       = attrs.get("donor_patient",  getattr(self.instance, "donor_patient", None))
+        patient     = attrs.get("patient",        getattr(self.instance, "patient", None))
+
+        if end and start and end <= start:
+            raise serializers.ValidationError("La fin doit être postérieure au début.")
+
+        if room and room.usage != Room.Usage.OPERATION_ROOM:
+            raise serializers.ValidationError(
+                f"La salle « {room.name} » n'est pas une salle d'opération."
+            )
+
+        if with_donor and not donor:
+            raise serializers.ValidationError(
+                "Sélectionnez un patient donneur quand 'opération avec donneur' est activé."
+            )
+
+        if donor and patient and donor.pk == patient.pk:
+            raise serializers.ValidationError(
+                "Le patient et le donneur ne peuvent pas être la même personne."
+            )
+
+        return attrs
+
+    # ── create / update (handle nested staff) ────────────────────────────────
+
+    def _sync_staff(self, instance, staff_data):
+        """Recreate staff assignments from the provided list."""
+        from crm.models import OperationStaff
+        from hr.models import Employee
+
+        instance.staff_assignments.all().delete()
+        for item in staff_data:
+            emp_id = item.get("employee")
+            role   = item.get("role", "").strip()
+            if not emp_id or not role:
+                continue
+            try:
+                emp = Employee.objects.get(pk=emp_id)
+            except Employee.DoesNotExist:
+                continue
+            OperationStaff.objects.create(operation=instance, employee=emp, role=role)
+
+    def create(self, validated_data):
+        staff_data = validated_data.pop("staff", [])
+        instance   = super().create(validated_data)
+        if staff_data:
+            self._sync_staff(instance, staff_data)
+        return instance
+
+    def update(self, instance, validated_data):
+        staff_data = validated_data.pop("staff", None)
+        instance   = super().update(instance, validated_data)
+        if staff_data is not None:
+            self._sync_staff(instance, staff_data)
+        return instance
 
 class TreatmentPlanSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source="patient.__str__", read_only=True)
@@ -450,7 +684,9 @@ class PortalLoginSerializer(serializers.Serializer):
     last_name = serializers.CharField()
     cin = serializers.CharField()
     medical_record_number = serializers.CharField()
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # Optional: if omitted the backend sends a one-time password by email
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, default="")
+ 
  
 class PortalRegisterSerializer(serializers.Serializer):
     """Création du compte portail par le staff (secrétaire/admin)."""
@@ -695,13 +931,17 @@ class PortalDashboardSerializer(serializers.Serializer):
     
 class DoctorAvailabilitySerializer(serializers.ModelSerializer):
     doctor_name = serializers.SerializerMethodField()
+    room_name   = serializers.SerializerMethodField()
  
     class Meta:
         model = DoctorAvailability
-        fields = ["id", "doctor", "doctor_name", "day_of_week", "start_time", "end_time", "is_active"]
+        fields = ["id", "doctor", "doctor_name", "day_of_week", "start_time", "end_time", "is_active", "room", "room_name"]
  
     def get_doctor_name(self, obj):
         return f"{obj.doctor.first_name} {obj.doctor.last_name}".strip() or obj.doctor.username
+
+    def get_room_name(self, obj):
+        return obj.room.name if obj.room_id else None
  
  
 class PatientPreferencesSerializer(serializers.ModelSerializer):

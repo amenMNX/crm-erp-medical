@@ -19,6 +19,7 @@ import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScheduleRouteImport } from './routes/schedule'
 import { Route as SalaryAdvancesRouteImport } from './routes/salary-advances'
+import { Route as RoomsRouteImport } from './routes/rooms'
 import { Route as Roles_permissionRouteImport } from './routes/roles_permission'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReportsRouteImport } from './routes/reports'
@@ -38,6 +39,7 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as EquipmentRouteImport } from './routes/equipment'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as DocumentRequestsRouteImport } from './routes/document-requests'
+import { Route as DoctorAvailabilityRouteImport } from './routes/doctor-availability'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
 import { Route as CnamRouteImport } from './routes/cnam'
@@ -112,6 +114,11 @@ const ScheduleRoute = ScheduleRouteImport.update({
 const SalaryAdvancesRoute = SalaryAdvancesRouteImport.update({
   id: '/salary-advances',
   path: '/salary-advances',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RoomsRoute = RoomsRouteImport.update({
+  id: '/rooms',
+  path: '/rooms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const Roles_permissionRoute = Roles_permissionRouteImport.update({
@@ -207,6 +214,11 @@ const EmployeesRoute = EmployeesRouteImport.update({
 const DocumentRequestsRoute = DocumentRequestsRouteImport.update({
   id: '/document-requests',
   path: '/document-requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DoctorAvailabilityRoute = DoctorAvailabilityRouteImport.update({
+  id: '/doctor-availability',
+  path: '/doctor-availability',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -348,6 +360,7 @@ export interface FileRoutesByFullPath {
   '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
+  '/doctor-availability': typeof DoctorAvailabilityRoute
   '/document-requests': typeof DocumentRequestsRoute
   '/employees': typeof EmployeesRoute
   '/equipment': typeof EquipmentRoute
@@ -367,6 +380,7 @@ export interface FileRoutesByFullPath {
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
+  '/rooms': typeof RoomsRoute
   '/salary-advances': typeof SalaryAdvancesRoute
   '/schedule': typeof ScheduleRoute
   '/settings': typeof SettingsRoute
@@ -404,6 +418,7 @@ export interface FileRoutesByTo {
   '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
+  '/doctor-availability': typeof DoctorAvailabilityRoute
   '/document-requests': typeof DocumentRequestsRoute
   '/employees': typeof EmployeesRoute
   '/equipment': typeof EquipmentRoute
@@ -423,6 +438,7 @@ export interface FileRoutesByTo {
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
+  '/rooms': typeof RoomsRoute
   '/salary-advances': typeof SalaryAdvancesRoute
   '/schedule': typeof ScheduleRoute
   '/settings': typeof SettingsRoute
@@ -461,6 +477,7 @@ export interface FileRoutesById {
   '/cnam': typeof CnamRoute
   '/complaints': typeof ComplaintsRoute
   '/dashboard': typeof DashboardRoute
+  '/doctor-availability': typeof DoctorAvailabilityRoute
   '/document-requests': typeof DocumentRequestsRoute
   '/employees': typeof EmployeesRoute
   '/equipment': typeof EquipmentRoute
@@ -480,6 +497,7 @@ export interface FileRoutesById {
   '/reports': typeof ReportsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/roles_permission': typeof Roles_permissionRoute
+  '/rooms': typeof RoomsRoute
   '/salary-advances': typeof SalaryAdvancesRoute
   '/schedule': typeof ScheduleRoute
   '/settings': typeof SettingsRoute
@@ -519,6 +537,7 @@ export interface FileRouteTypes {
     | '/cnam'
     | '/complaints'
     | '/dashboard'
+    | '/doctor-availability'
     | '/document-requests'
     | '/employees'
     | '/equipment'
@@ -538,6 +557,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
+    | '/rooms'
     | '/salary-advances'
     | '/schedule'
     | '/settings'
@@ -575,6 +595,7 @@ export interface FileRouteTypes {
     | '/cnam'
     | '/complaints'
     | '/dashboard'
+    | '/doctor-availability'
     | '/document-requests'
     | '/employees'
     | '/equipment'
@@ -594,6 +615,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
+    | '/rooms'
     | '/salary-advances'
     | '/schedule'
     | '/settings'
@@ -631,6 +653,7 @@ export interface FileRouteTypes {
     | '/cnam'
     | '/complaints'
     | '/dashboard'
+    | '/doctor-availability'
     | '/document-requests'
     | '/employees'
     | '/equipment'
@@ -650,6 +673,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/reset-password'
     | '/roles_permission'
+    | '/rooms'
     | '/salary-advances'
     | '/schedule'
     | '/settings'
@@ -688,6 +712,7 @@ export interface RootRouteChildren {
   CnamRoute: typeof CnamRoute
   ComplaintsRoute: typeof ComplaintsRoute
   DashboardRoute: typeof DashboardRoute
+  DoctorAvailabilityRoute: typeof DoctorAvailabilityRoute
   DocumentRequestsRoute: typeof DocumentRequestsRoute
   EmployeesRoute: typeof EmployeesRoute
   EquipmentRoute: typeof EquipmentRoute
@@ -707,6 +732,7 @@ export interface RootRouteChildren {
   ReportsRoute: typeof ReportsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   Roles_permissionRoute: typeof Roles_permissionRoute
+  RoomsRoute: typeof RoomsRoute
   SalaryAdvancesRoute: typeof SalaryAdvancesRoute
   ScheduleRoute: typeof ScheduleRoute
   SettingsRoute: typeof SettingsRoute
@@ -804,6 +830,13 @@ declare module '@tanstack/react-router' {
       path: '/salary-advances'
       fullPath: '/salary-advances'
       preLoaderRoute: typeof SalaryAdvancesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rooms': {
+      id: '/rooms'
+      path: '/rooms'
+      fullPath: '/rooms'
+      preLoaderRoute: typeof RoomsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/roles_permission': {
@@ -937,6 +970,13 @@ declare module '@tanstack/react-router' {
       path: '/document-requests'
       fullPath: '/document-requests'
       preLoaderRoute: typeof DocumentRequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/doctor-availability': {
+      id: '/doctor-availability'
+      path: '/doctor-availability'
+      fullPath: '/doctor-availability'
+      preLoaderRoute: typeof DoctorAvailabilityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -1128,6 +1168,7 @@ const rootRouteChildren: RootRouteChildren = {
   CnamRoute: CnamRoute,
   ComplaintsRoute: ComplaintsRoute,
   DashboardRoute: DashboardRoute,
+  DoctorAvailabilityRoute: DoctorAvailabilityRoute,
   DocumentRequestsRoute: DocumentRequestsRoute,
   EmployeesRoute: EmployeesRoute,
   EquipmentRoute: EquipmentRoute,
@@ -1147,6 +1188,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReportsRoute: ReportsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   Roles_permissionRoute: Roles_permissionRoute,
+  RoomsRoute: RoomsRoute,
   SalaryAdvancesRoute: SalaryAdvancesRoute,
   ScheduleRoute: ScheduleRoute,
   SettingsRoute: SettingsRoute,

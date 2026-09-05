@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   Trash2,
+  MapPin,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +51,15 @@ export const Route = createFileRoute("/equipment")({
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type MachineStatus = "active" | "maintenance" | "decommissioned";
+type RoomUsage = "medicalized" | "patient_appointment" | "stock";
+
+interface Room {
+  id: number;
+  name: string;
+  usage: RoomUsage;
+  location: string;
+  status: string;
+}
 
 interface Machine {
   id: number;
@@ -58,6 +68,8 @@ interface Machine {
   serial_number: string;
   manufacturer: string;
   status: MachineStatus;
+  room: number | null;
+  room_name: string | null;
   location: string;
   purchase_date: string | null;
   purchase_cost: string | null;
@@ -110,6 +122,11 @@ const fetchMachines = async () => {
   return unwrap(data);
 };
 
+const fetchRooms = async (): Promise<Room[]> => {
+  const data = await apiFetch<Paginated<Room>>("/crm/rooms/?page_size=200");
+  return unwrap(data);
+};
+
 const createMachine = (data: Partial<Machine>) =>
   apiFetch<Machine>("/crm/machines/", { method: "POST", body: data });
 
@@ -118,6 +135,9 @@ const updateMachine = ({ id, ...data }: Partial<Machine> & { id: number }) =>
 
 const deleteMachine = (id: number) =>
   apiFetch(`/crm/machines/${id}/`, { method: "DELETE" });
+
+const updateMachineRoom = (id: number, roomId: number | null) =>
+  apiFetch<Machine>(`/crm/machines/${id}/`, { method: "PATCH", body: { room: roomId } });
 
 const createLog = (data: Partial<MaintenanceLog>) =>
   apiFetch<MaintenanceLog>("/crm/maintenance-logs/", { method: "POST", body: data });
@@ -184,6 +204,12 @@ function EquipmentPage() {
   const machinesQuery = useQuery({ queryKey: ["machines"], queryFn: fetchMachines });
   const machines = machinesQuery.data ?? [];
 
+  // ── Rooms query (for assignment — only stock + medicalized)
+  const roomsQuery = useQuery({ queryKey: ["rooms-for-machines"], queryFn: fetchRooms });
+  const assignableRooms = (roomsQuery.data ?? []).filter(
+    (r) => (r.usage === "stock" || r.usage === "medicalized") && r.status === "active"
+  );
+
   // ── Filtered machines
   const filtered = useMemo(() => {
     return machines.filter((m) => {
@@ -221,6 +247,12 @@ function EquipmentPage() {
   });
   const deleteLogMutation = useMutation({
     mutationFn: deleteLog,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["machines"] }),
+  });
+
+  const updateRoomMutation = useMutation({
+    mutationFn: ({ id, roomId }: { id: number; roomId: number | null }) =>
+      updateMachineRoom(id, roomId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["machines"] }),
   });
 
@@ -328,8 +360,21 @@ function EquipmentPage() {
                   <Input name="serial_number" />
                 </div>
                 <div>
-                  <Label>Emplacement</Label>
-                  <Input name="location" />
+                  <Label>Salle / Local</Label>
+                  <select name="room" className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    <option value="">— Aucune —</option>
+                    {assignableRooms.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}{r.location ? ` (${r.location})` : ""}
+                        {r.usage === "stock" ? " 📦" : " 🛏️"}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Stock / Chambres médicalisées uniquement</p>
+                </div>
+                <div>
+                  <Label>Emplacement (complément)</Label>
+                  <Input name="location" placeholder="Étage, couloir…" />
                 </div>
                 <div>
                   <Label>Statut</Label>
@@ -389,6 +434,7 @@ function EquipmentPage() {
               <TableRow>
                 <TableHead className="w-8"></TableHead>
                 <TableHead>Machine</TableHead>
+                <TableHead>Salle</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead>Disponibilité</TableHead>
                 <TableHead>MTBF</TableHead>
@@ -401,7 +447,7 @@ function EquipmentPage() {
             <TableBody>
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                     Aucune machine trouvée
                   </TableCell>
                 </TableRow>
@@ -418,6 +464,16 @@ function EquipmentPage() {
                       <div className="font-medium">{m.name}</div>
                       <div className="text-xs text-muted-foreground">{m.manufacturer} {m.model}</div>
                       {m.location && <div className="text-xs text-muted-foreground">{m.location}</div>}
+                    </TableCell>
+                    <TableCell>
+                      {m.room_name ? (
+                        <span className="flex items-center gap-1 text-xs font-medium">
+                          <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />
+                          {m.room_name}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>{statusBadge(m.status)}</TableCell>
                     <TableCell>
@@ -469,7 +525,7 @@ function EquipmentPage() {
                   {/* ── Expanded: lifecycle + maintenance logs ── */}
                   {expandedId === m.id && (
                     <TableRow key={`${m.id}-expanded`}>
-                      <TableCell colSpan={9} className="bg-muted/30 p-4">
+                      <TableCell colSpan={10} className="bg-muted/30 p-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           {/* ── Amortissement ── */}
                           <Card>
@@ -512,6 +568,53 @@ function EquipmentPage() {
                             </CardContent>
                           </Card>
                         </div>
+
+                        {/* ── Salle / Localisation ── */}
+                        <Card>
+                          <CardHeader className="py-3 px-4">
+                            <CardTitle className="text-sm flex items-center gap-1.5">
+                              <MapPin className="h-4 w-4" /> Salle & Localisation
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="px-4 pb-4 text-sm space-y-3">
+                            <div className="space-y-1">
+                              <label className="text-xs text-muted-foreground font-medium">Salle assignée</label>
+                              <Select
+                                value={m.room != null ? String(m.room) : ""}
+                                onValueChange={(v) =>
+                                  updateRoomMutation.mutate({ id: m.id, roomId: v ? Number(v) : null })
+                                }
+                              >
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue placeholder="— Aucune —" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="">— Aucune —</SelectItem>
+                                  {assignableRooms.map((r) => (
+                                    <SelectItem key={r.id} value={String(r.id)}>
+                                      {r.usage === "stock" ? "📦" : "🛏️" } {r.name}
+                                      {r.location ? ` · ${r.location}` : ""}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <p className="text-[11px] text-muted-foreground">
+                                Seuls les locaux stock et chambres médicalisées sont sélectionnables.
+                              </p>
+                            </div>
+                            {m.location && (
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Complément</span>
+                                <span>{m.location}</span>
+                              </div>
+                            )}
+                            {updateRoomMutation.isPending && (
+                              <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Loader2 className="h-3 w-3 animate-spin" /> Enregistrement…
+                              </p>
+                            )}
+                          </CardContent>
+                        </Card>
 
                         {/* ── Maintenance logs ── */}
                         <div className="mt-4">

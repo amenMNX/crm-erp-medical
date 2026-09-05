@@ -116,6 +116,63 @@ export interface PortalAuthUser {
   authenticated?: boolean;
 }
 
+// ─── RDV en ligne — Types (US-PAT-05) ────────────────────────────────────────
+
+/** Un médecin retourné par GET /portal/doctors/ */
+export interface PortalDoctor {
+  id: number;
+  first_name: string;
+  last_name: string;
+  /** Prénom + Nom avec "Dr." préfixé, ex: "Dr. Sami Ben Ali" */
+  full_name: string;
+  /** Spécialité / département (peut être vide) */
+  specialty: string;
+  /** false = aucune disponibilité configurée → bouton désactivé dans le wizard */
+  has_availability: boolean;
+}
+
+/** Un créneau libre retourné par GET /portal/doctors/<id>/slots/ */
+export interface PortalSlot {
+  /** ISO 8601 avec timezone, ex: "2026-09-01T09:00:00+01:00" */
+  datetime: string;
+  /** YYYY-MM-DD pour grouper par jour */
+  date: string;
+  /** HH:MM pour affichage, ex: "09:00" */
+  time: string;
+  duration_minutes: number;
+}
+
+/** Réponse complète de GET /portal/doctors/<id>/slots/ */
+export interface PortalSlotsResponse {
+  slots: PortalSlot[];
+  doctor_id: number;
+  doctor_name: string;
+  appointment_type: string;
+  duration_minutes: number;
+}
+
+/** Réponse de POST /portal/appointments/book/ */
+export interface PortalBookingResult {
+  appointment_id: number;
+  appointment_date: string;
+  status: string;
+  duration_minutes: number;
+  confirmation_token: string;
+  message: string;
+}
+
+/** Les 4 types de RDV acceptés par le backend */
+export type AppointmentType = "simple" | "complex" | "followup" | "urgency" | "operation";
+
+/** Labels affichés dans le wizard (clé = valeur envoyée au backend) */
+export const APPOINTMENT_TYPE_LABELS: Record<AppointmentType, string> = {
+  simple:    "Consultation simple (15 min)",
+  complex:   "Consultation complexe (30 min)",
+  followup:  "Suivi traitement (45 min)",
+  urgency:   "Urgence (30 min)",
+  operation: "Opération chirurgicale (durée personnalisée)",
+};
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export const portalLogin = (
@@ -201,3 +258,94 @@ export const portalUpdateProfile = (
     method: "PATCH",
     body: { patient, account },
   });
+
+// ─── RDV en ligne (US-PAT-05) ────────────────────────────────────────────────
+
+/**
+ * GET /api/crm/portal/doctors/
+ * Liste les médecins acceptant des RDV en ligne.
+ * `has_availability: false` → afficher comme "Complet" (non sélectionnable).
+ */
+export const portalListDoctors = () =>
+  portalFetch<PortalDoctor[]>("/doctors/");
+
+/**
+ * GET /api/crm/portal/doctors/<doctorId>/slots/?type=<appointmentType>
+ * Créneaux libres sur les 14 prochains jours (j+2 à j+16).
+ * Les créneaux respectent les disponibilités hebdomadaires du médecin
+ * et excluent les créneaux déjà réservés.
+ */
+export const portalGetDoctorSlots = (
+  doctorId: number,
+  appointmentType: AppointmentType = "simple"
+) =>
+  portalFetch<PortalSlotsResponse>(
+    `/doctors/${doctorId}/slots/?type=${appointmentType}`
+  );
+
+/**
+ * POST /api/crm/portal/appointments/book/
+ * Prend un rendez-vous. Le backend vérifie que le créneau est toujours libre
+ * au moment de la réservation (protection contre les doubles réservations).
+ * Retourne 409 si le créneau a été pris entre-temps.
+ */
+export const portalBookAppointment = (payload: {
+  doctor_id: number;
+  slot_datetime: string;       // ISO 8601
+  appointment_type: AppointmentType;
+  reason: string;
+  duration_minutes?: number;   // for operation type — custom duration
+}) =>
+  portalFetch<PortalBookingResult>("/appointments/book/", {
+    method: "POST",
+    body: payload,
+  });
+
+/**
+ * POST /api/crm/portal/appointments/<appointmentId>/cancel/
+ * Annule un RDV du patient connecté.
+ * Seuls les statuts "scheduled" et "confirmed" sont annulables (400 sinon).
+ */
+export const portalCancelAppointment = (appointmentId: number) =>
+  portalFetch<{ detail: string; appointment_id: number }>(
+    `/appointments/${appointmentId}/cancel/`,
+    { method: "POST" }
+  );
+
+// ─── Factures ─────────────────────────────────────────────────────────────────
+
+export interface PortalInvoiceLineItem {
+  description: string;
+  quantity: string;
+  unit_price: string;
+  tax_rate: string;
+  line_total: string;
+}
+
+export interface PortalInvoice {
+  id: number;
+  invoice_number: string;
+  issue_date: string;
+  due_date: string | null;
+  status: "issued" | "paid" | "cancelled";
+  subtotal: string;
+  tax_amount: string;
+  total_amount: string;
+  paid_amount: string;
+  balance_due: string;
+  days_overdue: number;
+  notes: string;
+  line_items: PortalInvoiceLineItem[];
+}
+
+export const portalInvoices = () =>
+  portalFetch<PortalInvoice[]>("/invoices/");
+
+/** Returns the URL for downloading the PDF — open in new tab or anchor download */
+export const portalInvoicePdfUrl = (invoiceId: number): string => {
+  // Build the full URL using the same base as apiFetch
+  const base = (window as unknown as { __API_BASE__?: string }).__API_BASE__
+    ?? import.meta.env?.VITE_API_URL
+    ?? "/api";
+  return `${base}/crm/portal/invoices/${invoiceId}/pdf/`;
+};

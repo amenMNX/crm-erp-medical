@@ -8,8 +8,10 @@ import {
   LayoutDashboard,
   // CRM - Patients & Treatments
   Users,
+  DoorOpen,
   ActivitySquare,
   CalendarDays,
+  CalendarCheck,
   CalendarFold,
   Zap,
   // Support
@@ -23,6 +25,8 @@ import {
   UserX,
   Wallet,
   BookOpen,
+  ClipboardList,
+  UserPlus,
   // Finance
   FileText,
   CreditCard,
@@ -42,6 +46,8 @@ import {
   History,
   // Actions
   LogOut,
+  //event
+  PartyPopper
 } from "lucide-react";
 import {
   Sidebar,
@@ -87,7 +93,9 @@ const menuSections: { label: string; items: NavItem[] }[] = [
       { title: "Traitements",    url: "/treatments",   icon: ActivitySquare,   moduleName: "Traitements",      hasWrite: true },
       { title: "Protocoles",     url: "/protocols",    icon: Zap,              moduleName: "Protocoles",       hasWrite: true },
       { title: "Calendrier",     url: "/calendar",     icon: CalendarDays,     moduleName: "Calendrier",       hasWrite: true },
+      { title: "Disponibilites",  url: "/doctor-availability", icon: CalendarCheck, moduleName: "Calendrier",   hasWrite: true },
       { title: "Planning équipe",url: "/team-schedule",icon: CalendarFold,     moduleName: "Planning équipe",  hasWrite: true },
+      { title: "Salles",          url: "/rooms",         icon: DoorOpen,         moduleName: "Salles",           hasWrite: true },
     ],
   },
   {
@@ -103,11 +111,13 @@ const menuSections: { label: string; items: NavItem[] }[] = [
   {
     label: "Ressources Humaines",
     items: [
-      { title: "Employés",              url: "/employees",      icon: UserCog,  moduleName: "Employés",               hasWrite: true },
-      { title: "Congés",                url: "/leaves",         icon: CalendarDays, moduleName: "Congés",             hasWrite: true },
-      { title: "Absences",              url: "/absences",       icon: UserX,    moduleName: "Absences",               hasWrite: true },
-      { title: "Avances sur salaire",   url: "/salary-advances",icon: Wallet,   moduleName: "Avances sur salaire",    hasWrite: true },
-      { title: "Formations & Compétences", url: "/formations",  icon: BookOpen, moduleName: "Formations & Compétences", hasWrite: true },
+      { title: "Employés",              url: "/employees",         icon: UserCog,       moduleName: "Employés",               hasWrite: true },
+      { title: "Congés",                url: "/leaves",            icon: CalendarDays,  moduleName: "Congés",                 hasWrite: true },
+      { title: "Absences",              url: "/absences",          icon: UserX,         moduleName: "Absences",               hasWrite: true },
+      { title: "Avances sur salaire",   url: "/salary-advances",   icon: Wallet,        moduleName: "Avances sur salaire",    hasWrite: true },
+      { title: "Formations",            url: "/formations",        icon: BookOpen,      moduleName: "Formations & Compétences", hasWrite: true },
+      { title: "Demandes de documents", url: "/document-requests", icon: ClipboardList, moduleName: "Demandes de documents", hasWrite: true  },
+      { title: "Recrutement",           url: "/recruitment",       icon: UserPlus,      moduleName: "Recrutement",            hasWrite: true  },
     ],
   },
   {
@@ -140,6 +150,12 @@ const menuSections: { label: string; items: NavItem[] }[] = [
     items: [
       { title: "Rôles & Permissions", url: "/roles_permission", icon: ShieldCheck, moduleName: "Rôles & Permissions", hasWrite: false, adminOnly: true },
       { title: "Journal d'audit",     url: "/historique",       icon: History,     moduleName: "Journal d'audit",     hasWrite: false, adminOnly: true },
+    ],
+  },
+  {
+    label : "events",
+    items : [
+      { title: "Events", url: "/social-events", icon: PartyPopper, moduleName: "Events", hasWrite: true },
     ],
   },
   {

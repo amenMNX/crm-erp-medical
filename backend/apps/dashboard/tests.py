@@ -136,7 +136,7 @@ class ApiDocsTests(TestCase):
         self.assertIn("permissions", response.data)
         self.assertEqual(
             response.data["permissions"]["crm"]["write"],
-            ["admin", "doctor", "secretary", "radiotherapist"],
+            ["admin", "doctor", "secretary"],
         )
         self.assertEqual(
             response.data["permissions"]["accounting"]["write"],

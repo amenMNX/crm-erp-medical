@@ -13,6 +13,11 @@ export type ApiComplaint = {
 
 type Paginated<T> = { results: T[]; count: number } | T[];
 
+export function deleteComplaint(id: number): Promise<void> {
+  return apiFetch<void>(`/crm/complaints/${id}/`, {
+    method: "DELETE",
+  });
+}
 function unwrap<T>(data: Paginated<T>): T[] {
   return Array.isArray(data) ? data : data.results;
 }

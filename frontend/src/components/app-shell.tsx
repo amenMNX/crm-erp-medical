@@ -18,6 +18,7 @@ const ROUTE_MODULE_MAP: Record<string, { moduleName: string; hasWrite: boolean; 
   "/treatments":      { moduleName: "Traitements",              hasWrite: true  },
   "/protocols":       { moduleName: "Protocoles",               hasWrite: true  },
   "/calendar":        { moduleName: "Calendrier",               hasWrite: true  },
+  "/doctor-availability": { moduleName: "Calendrier",           hasWrite: true  },
   "/team-schedule":   { moduleName: "Planning équipe",          hasWrite: true  },
   "/tickets":         { moduleName: "Tickets",                  hasWrite: true  },
   "/incidents":       { moduleName: "Incidents",                hasWrite: true  },
@@ -62,7 +63,11 @@ export function AppShell({ title, actions, children }: AppShellProps) {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  // Use React Query for auth check — hits cache on subsequent navigations, no waterfall
+  // Use React Query for auth check — hits cache on subsequent navigations, no waterfall.
+  // retry: 1 gives apiFetch a chance to do its silent token refresh before we treat
+  // the failure as a genuine auth error. Without this, a page load right after the
+  // 15-minute access-token expiry would flash the error page even though the refresh
+  // cookie is still valid and the retry inside apiFetch already succeeded.
   const meQuery = useQuery({
     queryKey: ["current-user"],
     queryFn: async () => {
@@ -78,30 +83,34 @@ export function AppShell({ title, actions, children }: AppShellProps) {
       return user;
     },
     staleTime: 5 * 60 * 1000,   // 5 min — don't re-check auth on every click
+    // apiFetch already handles the 401→refresh→retry cycle internally.
+    // Set retry: false here so react-query doesn't add a second layer of retries
+    // on top. The single attempt from apiFetch is enough: if the refresh cookie
+    // is still valid it resolves transparently; if it's expired too, it throws
+    // and we redirect to login.
     retry: false,
   });
 
   // Fetch permissions — enabled as soon as me/ resolves.
-  // staleTime is intentionally short: permissions can change when an admin
-  // edits a role in the Roles & Permissions page, and we want the affected
-  // user to pick up the change within one navigation, not after 5 minutes.
   const permissionsQuery = useQuery({
     queryKey: ["my-permissions"],
     queryFn: fetchMyPermissions,
     enabled: meQuery.isSuccess,
-    staleTime: 30 * 1000,        // 30 seconds — balance freshness vs. API calls
-    refetchOnWindowFocus: true,  // re-validate when user switches back to tab
+    staleTime: 30 * 1000,
+    refetchOnWindowFocus: true,
     retry: false,
   });
 
-  // Redirect to login on auth failure
+  // Show nothing while auth is resolving (covers the 401→refresh→200 round-trip).
+  // Do NOT redirect on isLoading — the token refresh is async and takes ~200 ms.
+  if (meQuery.isLoading) return null;
+
+  // Only redirect when the query has fully settled on an error (both the original
+  // request AND the internal apiFetch refresh retry have failed).
   if (meQuery.isError) {
     navigate({ to: "/signin", replace: true });
     return null;
   }
-
-  // Show nothing while the very first auth check runs (no flash)
-  if (meQuery.isLoading) return null;
 
   // Enforce route access
   const perms = permissionsQuery.data ?? null;
@@ -164,4 +173,4 @@ export function AppShell({ title, actions, children }: AppShellProps) {
       </div>
     </SidebarProvider>
   );
-}
+} 

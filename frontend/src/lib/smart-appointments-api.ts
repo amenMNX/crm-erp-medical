@@ -136,6 +136,16 @@ export function addDoctorAvailability(
   });
 }
  
+export function updateDoctorAvailability(
+  pk: number,
+  data: Partial<Omit<DoctorAvailability, "id" | "doctor_name">>
+): Promise<DoctorAvailability> {
+  return apiFetch<DoctorAvailability>(`/crm/doctors/availability/${pk}/`, {
+    method: "PATCH",
+    body: data,
+  });
+}
+ 
 export function deleteDoctorAvailability(pk: number): Promise<void> {
   return apiFetch<void>(`/crm/doctors/availability/${pk}/`, { method: "DELETE" });
 }

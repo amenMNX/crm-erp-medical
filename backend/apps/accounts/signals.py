@@ -17,7 +17,7 @@ _EMPLOYEE_ROLES = {
     UserProfile.Role.DOCTOR,
     UserProfile.Role.SECRETARY,
     UserProfile.Role.ACCOUNTANT,
-    UserProfile.Role.HR,
+    UserProfile.Role.RESPONSABLE_HR,
     UserProfile.Role.SUPPORT_CLIENT,
     UserProfile.Role.MANAGER,
     UserProfile.Role.RECEPTIONIST,
@@ -113,9 +113,8 @@ def sync_employee_on_role_change(sender, instance, created, **kwargs):
 # from their profile without touching the HR module.
 _ROLE_TO_DEPARTMENT: dict[str, str] = {
     UserProfile.Role.DOCTOR:         "medical",
-    #UserProfile.Role.RADIOTHERAPIST: "medical",
     UserProfile.Role.ACCOUNTANT:     "finance",
-    UserProfile.Role.HR: "hr",
+    UserProfile.Role.RESPONSABLE_HR: "hr",
     UserProfile.Role.SUPPORT_CLIENT: "support",
     UserProfile.Role.RECEPTIONIST:   "support",
     UserProfile.Role.SECRETARY:      "support",
@@ -170,8 +169,8 @@ def _sync_employee_role(employee, new_role: str, profile: UserProfile) -> None:
     # Use update() instead of save() so no post_save signal is fired,
     # avoiding a re-entrant call to sync_employee_on_role_change.
     new_dept = _ROLE_TO_DEPARTMENT.get(new_role, "")
-    if profile.department_old!=new_dept:
-        UserProfile.objects.filter(pk=profile.pk).update(department_old=new_dept)
+    if profile.department != new_dept:
+        UserProfile.objects.filter(pk=profile.pk).update(department=new_dept)
         profile.department = new_dept   # keep the in-memory instance consistent
 
 
@@ -209,6 +208,6 @@ def _create_employee_for_user(user: User, role: str, profile: UserProfile) -> No
 
     # Stamp the department on the profile so it's always queryable.
     # Use update() to avoid re-triggering post_save on UserProfile.
-    if dept and profile.department_old != dept:  
-        UserProfile.objects.filter(pk=profile.pk).update(department_old=dept)
-        profile.department_old = dept   # keep the in-memory instance consistent
+    if dept and profile.department != dept:
+        UserProfile.objects.filter(pk=profile.pk).update(department=dept)
+        profile.department = dept   # keep the in-memory instance consistent

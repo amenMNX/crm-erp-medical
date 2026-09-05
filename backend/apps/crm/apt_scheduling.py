@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 User = get_user_model()
  
 # ─── Durées par type ──────────────────────────────────────────────────────────
-DURATION_MAP = {"simple": 15, "complex": 30, "followup": 45, "urgency": 30}
+DURATION_MAP = {"simple": 15, "complex": 30, "followup": 45, "urgency": 30,"operation": 60,}
 MIN_GAP_MINUTES = 5          # Délai minimum entre 2 RDV
 MAX_RDV_PER_DAY = 10         # Maximum RDV par médecin par jour
 CONFIRMATION_HOURS = 48      # Délai de confirmation patient
@@ -216,6 +216,7 @@ def book_slot(
     room_id: int | None = None,
     machine_id: int | None = None,
     reason: str = "",
+    duration_minutes: int | None = None, 
 ) -> "Appointment":
     """Crée le RDV + son extension + le token de confirmation."""
     from .models import Appointment
@@ -241,8 +242,7 @@ def book_slot(
         duration_minutes=duration,
         priority=priority,
         confirmation_token=token,
-        confirmation_deadline=timezone.now() + timedelta(hours=CONFIRMATION_HOURS),
-    )
+        confirmation_deadline=timezone.now() + timedelta(hours=CONFIRMATION_HOURS),)
     return apt
  
  

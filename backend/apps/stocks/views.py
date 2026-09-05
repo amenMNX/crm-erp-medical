@@ -16,8 +16,6 @@ from .serializers import (
 
 class StocksPermission(ReadOnlyOrRole):
     allowed_roles = ["admin", "pharmacist", "nurse", "doctor"]
-    # Must match the French name in RolePermission.write_permissions / frontend MODULES
-    module_label = "Stocks médicaux"
 
 
 class MedicalProductViewSet(viewsets.ModelViewSet):
